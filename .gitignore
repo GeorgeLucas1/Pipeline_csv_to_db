@@ -1,3 +1,9 @@
 .venv
 
+__pycache__
+
 database/
+ETL_PIPELINE/database/
+ETL_PIPELINE/medallion/bronze/processed/
+ETL_PIPELINE/medallion/silver/
+ETL_PIPELINE/medallion/gold/
