@@ -1,6 +1,6 @@
-# ETL Layer Pipeline 📊🗃️
+# ETL+DESENVOLVIMENTO DE API(PROJETO MISTURANDO CONHECIMENTOS DE DESENVOLVIMENTO BACK-END E ENG DE DADOS 📊🗃️
 
-**ETL Layer Pipeline** é um sistema de ingestão de dados que recebe arquivos **CSV e Excel** de origens variadas, aplica limpeza e tipagem automática, e carrega os resultados em um banco **SQLite** — uma tabela por arquivo processado. O projeto segue a arquitetura **Bronze / Silver / Gold**, com **Python**, **Pandas**, **SQLAlchemy** e **Streamlit**.
+**é sistema de ingestão de dados que recebe arquivos **CSV e Excel** de origens variadas, aplica limpeza e tipagem automática, e carrega os resultados em um banco **SQLite** — uma tabela por arquivo processado. O projeto segue a arquitetura **Bronze / Silver / Gold**, com **Python**, **Pandas**, **SQLAlchemy** e **Streamlit**.
 
 ---
 
@@ -187,7 +187,7 @@ Com o PostgreSQL, será possível implementar estratégias de backup e restaura�
 
 
 
-## 🗺️ PLANJEJAMENTO
+## 🗺️ PLANEJAMENTO
 
 - [FALTA FAZER] **API (FastAPI)** com rotas dinâmicas por tabela (CRUD completo)
 - [FALTAR FAZER ] **Orquestração (Airflow)** substituindo a execução manual
