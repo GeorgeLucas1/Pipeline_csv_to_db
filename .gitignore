@@ -3,7 +3,6 @@
 __pycache__
 
 database/
-ETL_PIPELINE/database/
 ETL_PIPELINE/medallion/bronze/processed/
 ETL_PIPELINE/medallion/silver/*.csv
 ETL_PIPELINE/medallion/gold/*.csv

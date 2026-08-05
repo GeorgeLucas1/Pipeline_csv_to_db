@@ -147,15 +147,21 @@ Não há GitHub Actions, Docker, ECR, ECS ou Terraform configurados. A tabela de
 
 ---
 
-## 🔒 Segurança
+## 🔒 Segurança e regras 
 
-Com a introdução da API e do PostgreSQL, a segurança se torna um aspecto crítico. As seguintes considerações são importantes:
+Com a introdução da API  e ser aplicado futuramente em PostgreSQL ou outro banco de dados, a segurança se torna um aspecto crítico. As seguintes considerações são importantes:
 
 *   **Credenciais Sensíveis**: As credenciais do PostgreSQL e a chave secreta do JWT serão gerenciadas via `.env` e, em produção, por um sistema de gerenciamento de segredos (ex: AWS Secrets Manager, HashiCorp Vault).
 *   **Dados Sensíveis**: A criptografia de dados em repouso e em trânsito será implementada. Para dados em repouso no PostgreSQL, pode-se considerar a criptografia a nível de disco ou de coluna. Para dados em trânsito, o HTTPS é fundamental.
 *   **Controle de Acesso**: A autenticação JWT/OAuth2 garantirá que apenas usuários autorizados possam acessar os endpoints da API. A autorização baseada em roles ou permissões pode ser adicionada para controle de acesso mais granular.
 *   **Validação de Entrada**: O Pydantic garantirá que os dados recebidos pela API sejam válidos, prevenindo ataques de injeção e outros vetores de ataque baseados em dados malformados.
 *   **Rate Limiting**: Proteção contra ataques de força bruta e negação de serviço.
+*   **CASO HAJA UM CSV QUE FOI TRANSFORMADO EM SQLITE**: o streamlit deve pedir pra colocar um nome altenativo para nao substituir a tabela e evitar valores substituidos.
+*   **TODO CSV É TRATADO NO PIPELINE PARA SE TORNAR APTO PRA CONSUMO DE API**: tanto no formato,valores duplicado e anomalias 
+*   **O FRONT DA APLICAÇÃO(STREAMLIT) NÃO SABE QUEM E O  BANCO APENAS ENVIA PRO PIPELINE**
+
+
+
 
 > ⚠️ Se este projeto vier a lidar com dados sensíveis de verdade (dados pessoais, de saúde, financeiros), isso precisa ser resolvido antes de qualquer uso além de teste local.
 
