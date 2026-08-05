@@ -12,7 +12,7 @@ DATA_RAW_DIR = os.path.join(RAIZ, "medallion", "bronze")
 PROCESSED_DIR = os.path.join(DATA_RAW_DIR, "processed")
 SILVER_DIR = os.path.join(RAIZ, "medallion", "silver")
 GOLD_DIR = os.path.join(RAIZ, "medallion", "gold")
-DB_PATH = "sqlite:///" + os.path.join(RAIZ, "database", "dynamic.db")
+DB_PATH = "sqlite:///" + os.path.join(RAIZ, "medallion", "gold", "database", "dynamic.db")
 
 EXTENSOES_SUPORTADAS = (".csv", ".xlsx", ".xls")
 
@@ -144,7 +144,38 @@ def transform_gold(df: pd.DataFrame) -> pd.DataFrame:
 # ============================================================
 def nome_tabela_a_partir_do_arquivo(caminho_arquivo: str) -> str:
     nome = os.path.splitext(os.path.basename(caminho_arquivo))[0]
-    nome = re.sub(r"[^0-9a-zA-Z_]+", "_", nome).lower().strip("_")
+    return _sanitizar_nome_tabela(nome)
+
+
+def _sanitizar_nome_tabela(nome: str) -> str:
+    return re.sub(r"[^0-9a-zA-Z_]+", "_", nome).lower().strip("_")
+
+
+PALAVRAS_RESERVADAS_SQL = {
+    "select", "from", "where", "insert", "into", "values", "update", "set",
+    "delete", "create", "drop", "alter", "table", "index", "view", "grant",
+    "revoke", "primary", "key", "foreign", "references", "not", "null",
+    "and", "or", "like", "between", "in", "is", "join", "inner", "left",
+    "right", "full", "outer", "on", "group", "order", "by", "having",
+    "limit", "offset", "union", "all", "distinct", "as", "with", "case",
+    "when", "then", "else", "end", "add", "column", "check", "default",
+    "unique", "constraint", "trigger", "transaction", "commit", "rollback",
+    "begin", "pragma", "explain", "vacuum", "reindex", "analyze", "attach",
+}
+
+
+def validar_nome_tabela(nome: str) -> str:
+    """Valida o nome da tabela e devolve ele normalizado (minúsculo)."""
+    nome = nome.strip().lower()
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", nome):
+        raise ValueError(
+            "Nome de tabela inválido. Use apenas letras minúsculas, números e '_', "
+            "começando com letra (até 63 caracteres), sem espaços ou caracteres especiais."
+        )
+    if nome in PALAVRAS_RESERVADAS_SQL:
+        raise ValueError(
+            f"'{nome}' é uma palavra reservada do SQL e não pode ser usada como nome de tabela."
+        )
     return nome
 
 
@@ -155,7 +186,18 @@ def load(df: pd.DataFrame, db_path: str, table_name: str) -> None:
         print(f"[LOAD] Pasta '{pasta}' criada.")
 
     engine = create_engine(db_path)
-    df.to_sql(table_name, engine, if_exists="replace", index=False)
+    with engine.connect() as conn:
+        existe = conn.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,),
+        ).fetchone()
+    if existe:
+        raise ValueError(
+            f"Pipeline rejeitado: a tabela '{table_name}' já existe no banco. "
+            "Escolha outro nome de tabela."
+        )
+
+    df.to_sql(table_name, engine, if_exists="fail", index=False)
 
     with engine.connect() as conn:
         total = conn.exec_driver_sql(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
@@ -165,8 +207,11 @@ def load(df: pd.DataFrame, db_path: str, table_name: str) -> None:
 # ============================================================
 # ORQUESTRAÇÃO: bronze -> silver -> gold -> banco
 # ============================================================
-def processar_arquivo(caminho_arquivo: str) -> None:
-    nome_tabela = nome_tabela_a_partir_do_arquivo(caminho_arquivo)
+def processar_arquivo(caminho_arquivo: str, table_name: str | None = None) -> None:
+    if table_name:
+        nome_tabela = validar_nome_tabela(table_name)
+    else:
+        nome_tabela = nome_tabela_a_partir_do_arquivo(caminho_arquivo)
     nome_base = os.path.splitext(os.path.basename(caminho_arquivo))[0]
     print(f"\n=== Processando '{os.path.basename(caminho_arquivo)}' "
           f"-> tabela '{nome_tabela}' ===")
