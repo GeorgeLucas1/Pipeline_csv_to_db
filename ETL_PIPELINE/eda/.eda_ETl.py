@@ -1,4 +1,3 @@
-
 import os
 import re
 import glob
@@ -12,14 +11,14 @@ DATA_RAW_DIR = os.path.join(RAIZ, "medallion", "bronze")
 PROCESSED_DIR = os.path.join(DATA_RAW_DIR, "processed")
 SILVER_DIR = os.path.join(RAIZ, "medallion", "silver")
 GOLD_DIR = os.path.join(RAIZ, "medallion", "gold")
-DB_PATH = "sqlite:///" + os.path.join(RAIZ, "medallion", "gold", "database", "dynamic.db")
+DB_PATH = "sqlite:///" + os.path.join(RAIZ, "medallion", "gold", "database", "tabela_dados_processados.db")
+NON_VALIDATED_DB_PATH = "sqlite:///" + os.path.join(RAIZ, "medallion", "gold", "database", "dados_nao_validados.db")
 
 EXTENSOES_SUPORTADAS = (".csv", ".xlsx", ".xls")
 
-#camada bronze /extract -> apenas leitura do arquivo, sem alterações
+
 def extract(caminho_arquivo: str) -> pd.DataFrame:
     extensao = os.path.splitext(caminho_arquivo)[1].lower()
-
 
     if extensao == ".csv":
         try:
@@ -56,7 +55,7 @@ def eda(df: pd.DataFrame) -> None:
     for col in colunas_categoricas:
         print(f"  {col}: {df[col].unique().tolist()}")
 
-# 
+
 def _padronizar_nomes_colunas(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = (
         df.columns.astype(str).str.strip()
@@ -67,15 +66,25 @@ def _padronizar_nomes_colunas(df: pd.DataFrame) -> pd.DataFrame:
     )
     return df
 
-#camada silver> transformar os dados
+
+def _colunas_por_termo(df: pd.DataFrame, termos: tuple) -> list:
+    return [c for c in df.columns if any(t in c for t in termos)]
+
+
 def transform_silver(df: pd.DataFrame) -> pd.DataFrame:
-    """Limpeza estrutural: nomes de coluna, espaços em branco, duplicados."""
     df = df.copy()
     df = _padronizar_nomes_colunas(df)
 
     antes = len(df)
     df = df.drop_duplicates()
     print(f"[SILVER] Removidas {antes - len(df)} linhas duplicadas.")
+
+    for col in _colunas_por_termo(df, ("email", "e_mail", "e-mail")):
+        df[col] = df[col].fillna("").astype("object")
+
+    antes = len(df)
+    df = df.dropna()
+    print(f"[SILVER] Removidas {antes - len(df)} linhas com valores nulos.")
 
     for col in df.columns:
         if df[col].dtype == "object" or str(df[col].dtype) == "str":
@@ -86,7 +95,97 @@ def transform_silver(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-#Gold-preparar dados para consumo final, detectando e convertendo tipos reais (bool, número, data)
+def _email_status(valor) -> str:
+    texto = "" if pd.isna(valor) else str(valor).strip()
+    if texto in ("", "nan", "none"):
+        return "ausente"
+    if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]{2,}", texto):
+        return "valido"
+    return "invalido"
+
+
+def _cpf_valido(valor) -> bool:
+    cpf = re.sub(r"[^0-9]", "", str(valor))
+    if len(cpf) != 11 or cpf == cpf[0] * 11:
+        return False
+    for i in range(9, 11):
+        soma = sum(int(cpf[j]) * (i + 1 - j) for j in range(i))
+        digito = (soma * 10) % 11
+        digito = 0 if digito == 10 else digito
+        if digito != int(cpf[i]):
+            return False
+    return True
+
+
+def _cnpj_valido(valor) -> bool:
+    cnpj = re.sub(r"[^0-9]", "", str(valor))
+    if len(cnpj) != 14 or cnpj == cnpj[0] * 14:
+        return False
+    pesos1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+    pesos2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+    for pesos in (pesos1, pesos2):
+        soma = sum(int(cnpj[j]) * pesos[j] for j in range(len(pesos)))
+        resto = soma % 11
+        digito = 0 if resto < 2 else 11 - resto
+        if digito != int(cnpj[len(pesos)]):
+            return False
+    return True
+
+
+def validar_dados_silver(df: pd.DataFrame) -> tuple:
+    df = df.copy()
+
+    colunas_email = _colunas_por_termo(df, ("email", "e_mail", "e-mail"))
+    colunas_cpf = _colunas_por_termo(df, ("cpf",))
+    colunas_cnpj = _colunas_por_termo(df, ("cnpj",))
+
+    for col in colunas_email:
+        df[f"{col}_status"] = [_email_status(v) for v in df[col]]
+    for col in colunas_cpf:
+        df[f"{col}_valido"] = [_cpf_valido(v) for v in df[col]]
+    for col in colunas_cnpj:
+        df[f"{col}_valido"] = [_cnpj_valido(v) for v in df[col]]
+
+    mascara_anomalia = pd.Series(False, index=df.index)
+    for col in colunas_email:
+        mascara_anomalia |= df[f"{col}_status"].isin(["invalido", "ausente"])
+    for col in colunas_cpf:
+        mascara_anomalia |= ~df[f"{col}_valido"]
+    for col in colunas_cnpj:
+        mascara_anomalia |= ~df[f"{col}_valido"]
+
+    colunas_auxiliares = [
+        c for c in df.columns if c.endswith("_status") or c.endswith("_valido")
+    ]
+    dados_validos = df[~mascara_anomalia].drop(columns=colunas_auxiliares)
+
+    dados_nao_validados = df[mascara_anomalia].copy()
+    dados_nao_validados["motivo_rejeicao"] = ""
+    for col in colunas_email:
+        status = dados_nao_validados[f"{col}_status"]
+        dados_nao_validados.loc[status == "invalido", "motivo_rejeicao"] += (
+            f"{col}: email invalido; "
+        )
+        dados_nao_validados.loc[status == "ausente", "motivo_rejeicao"] += (
+            f"{col}: email ausente; "
+        )
+    for col in colunas_cpf:
+        dados_nao_validados.loc[
+            ~dados_nao_validados[f"{col}_valido"], "motivo_rejeicao"
+        ] += f"{col}: cpf invalido; "
+    for col in colunas_cnpj:
+        dados_nao_validados.loc[
+            ~dados_nao_validados[f"{col}_valido"], "motivo_rejeicao"
+        ] += f"{col}: cnpj invalido; "
+    dados_nao_validados["motivo_rejeicao"] = (
+        dados_nao_validados["motivo_rejeicao"].str.rstrip("; ")
+    )
+    dados_nao_validados = dados_nao_validados.drop(columns=colunas_auxiliares)
+
+    print(f"[SILVER] Validação: {len(dados_validos)} linhas válidas, "
+          f"{len(dados_nao_validados)} linhas com anomalias.")
+    return dados_validos, dados_nao_validados
+
 
 def _tentar_converter_booleano(serie: pd.Series) -> pd.Series:
     valores = serie.dropna().astype(str).str.strip().str.lower().unique().tolist()
@@ -122,7 +221,6 @@ def _tentar_converter_data(nome_col: str, serie: pd.Series) -> pd.Series:
 
 
 def transform_gold(df: pd.DataFrame) -> pd.DataFrame:
-    """Detecta e converte o tipo real de cada coluna (bool, número, data)."""
     df = df.copy()
 
     for col in df.columns:
@@ -139,16 +237,16 @@ def transform_gold(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ============================================================
-# LOAD -> grava a tabela no banco
-# ============================================================
 def nome_tabela_a_partir_do_arquivo(caminho_arquivo: str) -> str:
     nome = os.path.splitext(os.path.basename(caminho_arquivo))[0]
     return _sanitizar_nome_tabela(nome)
 
 
 def _sanitizar_nome_tabela(nome: str) -> str:
-    return re.sub(r"[^0-9a-zA-Z_]+", "_", nome).lower().strip("_")
+    nome = re.sub(r"[^0-9a-zA-Z_]+", "_", nome).lower()
+    nome = re.sub(r"^[0-9_]+", "", nome)
+    nome = nome.strip("_")
+    return nome[:63]
 
 
 PALAVRAS_RESERVADAS_SQL = {
@@ -165,7 +263,6 @@ PALAVRAS_RESERVADAS_SQL = {
 
 
 def validar_nome_tabela(nome: str) -> str:
-    """Valida o nome da tabela e devolve ele normalizado (minúsculo)."""
     nome = nome.strip().lower()
     if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", nome):
         raise ValueError(
@@ -204,9 +301,23 @@ def load(df: pd.DataFrame, db_path: str, table_name: str) -> None:
         print(f"[LOAD] Tabela '{table_name}': {total} linhas gravadas.")
 
 
-# ============================================================
-# ORQUESTRAÇÃO: bronze -> silver -> gold -> banco
-# ============================================================
+def salvar_nao_validados(df: pd.DataFrame, table_name: str) -> None:
+    if df.empty:
+        print("[NAO_VALIDADOS] Nenhuma anomalia encontrada, nada a salvar.")
+        return
+
+    pasta = os.path.dirname(NON_VALIDATED_DB_PATH.replace("sqlite:///", ""))
+    os.makedirs(pasta, exist_ok=True)
+
+    engine = create_engine(NON_VALIDATED_DB_PATH)
+    df.to_sql(table_name, engine, if_exists="append", index=False)
+
+    with engine.connect() as conn:
+        total = conn.exec_driver_sql(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+        print(f"[NAO_VALIDADOS] {len(df)} linhas acumuladas na tabela "
+              f"'{table_name}' (total no banco: {total}).")
+
+
 def processar_arquivo(caminho_arquivo: str, table_name: str | None = None) -> None:
     if table_name:
         nome_tabela = validar_nome_tabela(table_name)
@@ -216,28 +327,26 @@ def processar_arquivo(caminho_arquivo: str, table_name: str | None = None) -> No
     print(f"\n=== Processando '{os.path.basename(caminho_arquivo)}' "
           f"-> tabela '{nome_tabela}' ===")
 
-    # BRONZE
     df_bronze = extract(caminho_arquivo)
     eda(df_bronze)
 
-    # SILVER
     df_silver = transform_silver(df_bronze)
+    df_silver, df_nao_validados = validar_dados_silver(df_silver)
     os.makedirs(SILVER_DIR, exist_ok=True)
     caminho_silver = os.path.join(SILVER_DIR, f"{nome_base}_silver.csv")
     df_silver.to_csv(caminho_silver, index=False)
     print(f"[SILVER] Salvo em '{caminho_silver}'.")
 
-    # GOLD
     df_gold = transform_gold(df_silver)
     os.makedirs(GOLD_DIR, exist_ok=True)
     caminho_gold = os.path.join(GOLD_DIR, f"{nome_base}_gold.csv")
     df_gold.to_csv(caminho_gold, index=False)
     print(f"[GOLD] Salvo em '{caminho_gold}'.")
 
-    # LOAD
     load(df_gold, DB_PATH, nome_tabela)
 
-    # Move o arquivo original (bronze) pra processed/
+    salvar_nao_validados(df_nao_validados, table_name="dados_nao_validados")
+
     os.makedirs(PROCESSED_DIR, exist_ok=True)
     destino = os.path.join(PROCESSED_DIR, os.path.basename(caminho_arquivo))
     shutil.move(caminho_arquivo, destino)

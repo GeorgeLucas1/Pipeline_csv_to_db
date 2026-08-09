@@ -15,6 +15,7 @@ _ETL_SPEC.loader.exec_module(etl)
 processar_arquivo = etl.processar_arquivo
 nome_tabela_a_partir_do_arquivo = etl.nome_tabela_a_partir_do_arquivo
 validar_nome_tabela = etl.validar_nome_tabela
+sanitizar_nome_tabela = etl._sanitizar_nome_tabela
 extract = etl.extract
 DATA_RAW_DIR = etl.DATA_RAW_DIR
 
@@ -45,13 +46,19 @@ if arquivo_enviado is not None:
     st.dataframe(df_previa.head(20))
 
     @st.dialog("Confirmar nome da tabela")
-    def confirmar_tabela(nome_sugerido: str):
-        novo_nome = st.text_input(
+    def confirmar_tabela():
+        nome_bruto = st.text_input(
             "Nome da tabela no banco de dados:",
-            value=nome_sugerido,
+            key="nome_tabela_input",
         )
+        nome_bruto = nome_bruto or ""
+        nome_sanitizado = sanitizar_nome_tabela(nome_bruto)
+        if nome_sanitizado != nome_bruto:
+            st.session_state["nome_tabela_input"] = nome_sanitizado
+            st.rerun()
+
         try:
-            nome_validado = validar_nome_tabela(novo_nome)
+            nome_validado = validar_nome_tabela(nome_sanitizado)
         except ValueError as erro:
             st.error(str(erro))
             return
@@ -66,7 +73,11 @@ if arquivo_enviado is not None:
 
     if arquivo_enviado.name != st.session_state.get("arquivo_processado"):
         if "tabela_confirmada" not in st.session_state:
-            confirmar_tabela(nome_tabela_a_partir_do_arquivo(caminho_destino))
+            if "nome_tabela_input" not in st.session_state:
+                st.session_state["nome_tabela_input"] = (
+                    nome_tabela_a_partir_do_arquivo(caminho_destino)
+                )
+            confirmar_tabela()
 
     nome_confirmado = st.session_state.get("tabela_confirmada", "")
 
