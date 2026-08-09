@@ -1,3 +1,4 @@
+
 # ETL + DESENVOLVIMENTO DE API (PROJETO MISTURANDO BACK-END E ENGENHARIA DE DADOS) 📊🗃️
 
 **É um sistema de ingestão de dados que recebe arquivos CSV e Excel de origens variadas, aplica limpeza, validação e tipagem automática, e carrega os resultados em um banco SQLite — uma tabela por arquivo processado.** O projeto segue a arquitetura **Medalhão (Bronze / Silver / Gold)**, com **Python**, **Pandas**, **SQLAlchemy** e **Streamlit**.
@@ -12,7 +13,7 @@ graph TD
     User -->|Copia arquivo| Raw[medallion/bronze/]
     ST -->|Salva arquivo| Raw
 
-    subgraph Pipeline ETL (.eda_ETl.py)
+    subgraph "Pipeline ETL (.eda_ETl.py)"
         Raw -->|.csv / .xlsx / .xls| Extract[Extract: Bronze]
         Extract --> EDA[EDA automática]
         EDA --> Silver[Transform: Silver<br/>limpeza + validação]
