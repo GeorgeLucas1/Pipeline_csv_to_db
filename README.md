@@ -1,7 +1,10 @@
+# ETL (PIPELINE DE ARQUIVOS XLS,CSV PARA SQLITE, VOLTADO À INTEGRAÇÃO COM UM BANCO DE DADOS) 📊🗃️
 
-# ETL + DESENVOLVIMENTO DE API (PROJETO MISTURANDO BACK-END E ENGENHARIA DE DADOS) 📊🗃️
+**É um pipeline de ingestão de dados que recebe arquivos CSV e Excel, aplica limpeza, validação e tipagem automática, e carrega o resultado em um banco SQLite — uma tabela por arquivo processado.** O escopo do projeto termina aqui: ele entrega um SQLite limpo, validado e tipado, pronto para ser **integrado** a um banco de dados definitivo.
 
-**É um sistema de ingestão de dados que recebe arquivos CSV e Excel de origens variadas, aplica limpeza, validação e tipagem automática, e carrega os resultados em um banco SQLite — uma tabela por arquivo processado.** O projeto segue a arquitetura **Medalhão (Bronze / Silver / Gold)**, com **Python**, **Pandas**, **SQLAlchemy** e **Streamlit**.
+**A modelagem do banco de destino, a estratégia de integração (migração, réplica, ETL adicional, etc.) e as decisões de schema relacional são responsabilidade de quem for trabalhar com esse dado a partir daqui — desenvolvedor backend, analista de dados ou DBA.** Este projeto não define, nem pretende definir, como esse banco final deve ser modelado; ele apenas entrega dados prontos para consumo.
+
+O projeto segue a arquitetura **Medalhão (Seeding → Bronze / Silver / Gold)**, com **Python**, **Pandas**, **Streamlit** e **SQLAlchemy** — este último atuando como camada de apoio à persistência, abstraindo a escrita no SQLite e facilitando uma futura troca de engine sem reescrever a lógica de carga.
 
 ---
 
@@ -9,6 +12,7 @@
 
 ```mermaid
 graph TD
+    Seed[Seeding: geração/preparação<br/>de dados de teste] -->|arquivo sintético ou de amostra| Raw
     User([Usuário]) -->|Upload manual| ST[Streamlit App]
     User -->|Copia arquivo| Raw[medallion/bronze/]
     ST -->|Salva arquivo| Raw
@@ -26,6 +30,8 @@ graph TD
     Silver -->|Anomalias| DB2[(dados_nao_validados.db)]
 
     Raw -.->|arquivo original| Processed[medallion/bronze/processed/]
+
+    DB -.->|integração manual: dev/analista/DBA| Ext[(Banco de dados<br/>definitivo)]
 ```
 
 ---
@@ -34,13 +40,14 @@ graph TD
 
 | Diretório / Arquivo | Descrição | Tecnologia |
 | :--- | :--- | :--- |
-| `ETL_PIPELINE/medallion/bronze/` | Camada Bronze — arquivos originais aguardando processamento | — |
+| `ETL_PIPELINE/medallion/seeding/` | Camada Seeding — geração ou preparação de dados de teste/amostra, **anterior à Bronze**, usada para popular o pipeline antes da ingestão de dados reais | Python / Faker (planejado) |
+| `ETL_PIPELINE/medallion/bronze/` | Camada Bronze — arquivos originais (reais ou vindos do seeding) aguardando processamento | — |
 | `ETL_PIPELINE/medallion/bronze/processed/` | Arquivos já processados, movidos automaticamente | — |
 | `ETL_PIPELINE/medallion/silver/` | CSVs com limpeza estrutural e validação (`*_silver.csv`) | Pandas |
-| `ETL_PIPELINE/medallion/gold/` | CSVs com tipos finais (`*_gold.csv`) | Pandas |
-| `ETL_PIPELINE/medallion/gold/database/tabela_dados_processados.db` | Banco principal — uma tabela por arquivo processado | SQLite |
+| `ETL_PIPELINE/medallion/gold/` | CSVs com tipos finais (`*_gold.csv`), prontos para carga no banco relacional | Pandas |
+| `ETL_PIPELINE/medallion/gold/database/tabela_dados_processados.db` | Banco principal — uma tabela por arquivo processado, pronto para integração externa | SQLite |
 | `ETL_PIPELINE/medallion/gold/database/dados_nao_validados.db` | Banco de anomalias — linhas rejeitadas, acumulando | SQLite |
-| `ETL_PIPELINE/eda/.eda_ETl.py` | Lógica do pipeline: extract, EDA, transform silver/gold, load, validação | Python 3 |
+| `ETL_PIPELINE/eda/.eda_ETl.py` | Lógica do pipeline: extract, EDA, transform silver/gold, load (via SQLAlchemy), validação | Python 3 / SQLAlchemy |
 | `ETL_PIPELINE/streamlit/app.py` | Interface web para upload manual de arquivos | Streamlit |
 | `README.md` | Documentação do projeto | — |
 
@@ -51,7 +58,6 @@ graph TD
 ### Pré-requisitos
 * Python 3.10+
 * pip
-* (Futuro) Docker e Docker Compose para a API e PostgreSQL
 
 ### 1. Instalar dependências
 ```bash
@@ -72,9 +78,17 @@ python ETL_PIPELINE/eda/.eda_ETl.py
 
 ## ⚙️ Como o Pipeline Funciona
 
+O pipeline foi desenhado de ponta a ponta pensando na carga final em um banco de dados relacional: cada camada existe para deixar o dado cada vez mais próximo do formato que uma tabela relacional exige (schema definido, tipos corretos, sem duplicidade, sem nulos inesperados).
+
+### Seeding (Pré-Bronze)
+- Camada **anterior à Bronze**, usada para gerar ou preparar dados de teste/amostra antes da chegada de dados reais
+- Objetivo: permitir validar o pipeline e o schema do banco de dados relacional sem depender de arquivos reais
+- Pode gerar arquivos sintéticos (ex.: com Faker) ou apenas selecionar/anonimizar amostras de arquivos existentes
+- O resultado da camada de Seeding é depositado em `medallion/bronze/`, seguindo o mesmo fluxo de um arquivo real — o pipeline não diferencia a origem
+
 ### Bronze (Extract)
 - Lê arquivos **CSV** (tentando `;` e depois `,`) e **Excel** (`.xlsx` / `.xls`)
-- Sem nenhuma transformação — dado bruto, como veio
+- Sem nenhuma transformação — dado bruto, como veio (seja de origem real ou de seeding)
 
 ### Silver (Transform + Validação)
 - Padroniza nomes de colunas (minúsculas, sem caracteres especiais)
@@ -87,11 +101,14 @@ python ETL_PIPELINE/eda/.eda_ETl.py
 
 ### Gold (Tipagem)
 - Converte automaticamente colunas para o tipo real: **booleano** (Sim/Não, Yes/No), **número** (com vírgula decimal) e **data**
-- Gera o `*_gold.csv` pronto para consumo
+- Gera o `*_gold.csv` pronto para consumo — já no formato esperado por um schema relacional
 
-### Load
+### Load (Persistência via SQLAlchemy)
+- A escrita no banco é feita através do **SQLAlchemy**, que atua como camada de apoio à persistência entre o pipeline e o SQLite — o pipeline não executa SQL cru, ele usa o SQLAlchemy como intermediário (engine + conexão)
 - Grava a tabela no banco principal `tabela_dados_processados.db`
 - **Não substitui tabela existente**: se a tabela já existe, o pipeline é **rejeitado** — é preciso escolher outro nome
+- Por o SQLAlchemy abstrair o dialeto do banco, trocar o SQLite por outra engine relacional no futuro (ex.: PostgreSQL) tende a exigir pouca ou nenhuma mudança na lógica de carga — mas essa troca **não faz parte do escopo deste pipeline**
+- A partir daqui, o dado está pronto para ser consumido e integrado ao banco definitivo por quem for responsável por essa etapa (dev backend, analista ou DBA)
 
 ### Banco de Anomalias
 - Toda linha rejeitada na validação é **acumulada** em `dados_nao_validados.db` (tabela `dados_nao_validados`), com o motivo de cada rejeição
@@ -122,41 +139,29 @@ O Streamlit **sanitiza o nome automaticamente enquanto o usuário digita**, apli
 
 ## 🖥️ Interface Streamlit
 
-- Envia um arquivo **CSV ou Excel** e mostra uma **prévia** dos dados
+- Envia um arquivo **CSV ou Excel** (real ou vindo da camada de Seeding) e mostra uma **prévia** dos dados
 - Abre um popup para **confirmar/alterar o nome da tabela** (validado em tempo real)
-- Ao confirmar, **ativa o pipeline** (bronze → silver → gold → banco)
+- Ao confirmar, **ativa o pipeline** (seeding opcional → bronze → silver → gold → banco relacional)
 - O Streamlit **não consulta o banco de dados**: apenas envia o arquivo e o nome da tabela para o pipeline; se o pipeline rejeitar (ex.: tabela duplicada), o erro é exibido em vermelho
 
 ---
 
-## 🔌 API
+## 🤝 Responsabilidade de Integração
 
-**Status atual: Planejada e em desenvolvimento.** A API será construída com **FastAPI** para oferecer endpoints robustos e de alta performance para interagir com os dados processados e disparar o pipeline ETL. A segurança será garantida por **JWT/OAuth2**, a validação de dados por **Pydantic**, a persistência por **SQLAlchemy** com **PostgreSQL**, e a conteinerização em **Docker**.
+Este pipeline **não inclui API, autenticação, nem definição de schema do banco final**. O SQLAlchemy usado aqui serve apenas como camada de apoio à **persistência interna do pipeline** (escrever no SQLite) — ele não define modelos de domínio, não expõe endpoints e não modela o banco de destino. Ele entrega um arquivo SQLite validado e tipado — o que acontece depois é responsabilidade de quem for consumir esse dado:
 
-### Componentes da API:
+*   **Desenvolvedor Backend**: decide como o dado do SQLite será lido, transformado em modelos de aplicação e exposto (API própria, job de sincronização, etc.), fora do escopo deste repositório.
+*   **Analista de Dados**: usa o SQLite como fonte para análises, dashboards ou cargas em ferramentas de BI.
+*   **DBA**: define a modelagem do banco de dados definitivo (relacional ou não), estratégia de migração/replicação do SQLite para esse banco, índices, constraints e política de versionamento de schema.
 
-*   **FastAPI**: Framework web moderno e rápido para construir APIs com Python 3.7+ baseado em tipagem padrão do Python. Oferece documentação interativa automática (Swagger UI/ReDoc).
-*   **Pydantic**: Utilizado para validação de dados e serialização/desserialização, garantindo que os dados de entrada e saída estejam em conformidade com os modelos definidos.
-*   **JWT/OAuth2**: Implementação de autenticação e autorização baseada em tokens.
-*   **SQLAlchemy**: ORM e toolkit SQL para interagir com o banco de dados de forma eficiente e segura.
-*   **PostgreSQL**: Banco de dados principal para armazenar os dados processados, substituindo ou complementando o SQLite.
-*   **.env**: Variáveis de ambiente para credenciais, chaves secretas e outras configurações sensíveis, fora do controle de versão.
-*   **HTTPS**: Comunicação protegida por HTTPS, possivelmente com um proxy reverso como Nginx.
-*   **Rate Limiting**: Proteção contra abusos e ataques de negação de serviço (ex.: `fastapi-limiter`, `SlowAPI`).
-*   **Pytest**: Testes unitários e de integração para a API e o pipeline.
-*   **Docker**: API, PostgreSQL e potencialmente o Streamlit conteinerizados.
-
-### Endpoints Planejados:
-
-*   `/auth/token`: Endpoint para autenticação e obtenção de JWT.
-*   `/etl/upload`: Recebe arquivos CSV/Excel e dispara o pipeline ETL.
-*   `/data/{table_name}`: API dinâmica para CRUD completo em tabelas específicas do banco.
-*   `/data/{table_name}/{id}`: Acesso a registros específicos.
+O pipeline garante apenas que o dado que chega até essas pessoas está **limpo, validado e tipado** — não garante nada sobre como ele deve ser modelado no destino final.
 
 ---
 
 ## 📝 Notas de Desenvolvimento
 
+*   **Escopo do pipeline**: vai do arquivo bruto (CSV/Excel) até um SQLite validado e tipado. Não há API, autenticação ou definição de banco definitivo neste repositório.
+*   **Seeding como camada de apoio**: útil para testes de schema e de carga sem exigir dados reais logo de início; não é uma etapa obrigatória do fluxo de produção.
 *   **Reprocessamento**: tabela duplicada → pipeline **rejeitado** (sem substituição). Use um nome diferente ou mova o arquivo de volta da `processed/` para a `bronze/`.
 *   **Camadas em disco**: `medallion/silver/` e `medallion/gold/` guardam CSVs intermediários para depuração.
 *   **Anomalias**: `dados_nao_validados.db` acumula as linhas rejeitadas com o motivo — útil para auditoria de qualidade de dados.
@@ -178,30 +183,23 @@ O Streamlit **sanitiza o nome automaticamente enquanto o usuário digita**, apli
 
 ## 🔒 Segurança e regras
 
-Com a introdução da API e, futuramente, PostgreSQL ou outro banco de dados, a segurança se torna um aspecto crítico. As seguintes considerações são importantes:
+O escopo de segurança deste projeto é o do próprio pipeline local — autenticação, controle de acesso e criptografia em trânsito são responsabilidade de quem for integrar o SQLite resultante a um sistema maior.
 
-*   **Credenciais Sensíveis**: Gerenciadas via `.env` e, em produção, por um sistema de gerenciamento de segredos (ex: AWS Secrets Manager, HashiCorp Vault).
-*   **Dados Sensíveis**: Criptografia em repouso e em trânsito; HTTPS fundamental.
-*   **Controle de Acesso**: Autenticação JWT/OAuth2 e autorização baseada em roles/permissões.
-*   **Validação de Entrada**: Pydantic previne injeção e dados malformados na API.
-*   **Rate Limiting**: Proteção contra força bruta e DoS.
 *   **Tabela duplicada**: o pipeline **rejeita** a inserção se a tabela já existir — o usuário deve informar um nome alternativo para não substituir dados.
-*   **TODO CSV É TRATADO NO PIPELINE PARA SE TORNAR APTO PARA CONSUMO DE API**: tanto no formato quanto em valores duplicados e anomalias.
+*   **Dados de Seeding**: se gerados sinteticamente, não representam dados sensíveis reais; se derivados de amostras reais, devem ser anonimizados antes de entrar na Bronze.
+*   **Todo CSV/Excel é tratado no pipeline para virar dado consumível**: tanto no formato quanto em valores duplicados e anomalias.
 *   **O FRONT (STREAMLIT) NÃO SABE QUEM É O BANCO**: apenas envia o arquivo para o pipeline.
+*   **Sem gestão de credenciais externas**: o projeto não expõe nem consome serviços externos — não há `.env` de produção, JWT ou segredos a gerenciar neste escopo.
 
-> ⚠️ Se este projeto vier a lidar com dados sensíveis de verdade (dados pessoais, de saúde, financeiros), isso precisa ser resolvido antes de qualquer uso além de teste local.
+> ⚠️ Se este projeto vier a lidar com dados sensíveis de verdade (dados pessoais, de saúde, financeiros), isso precisa ser resolvido — pela equipe responsável pela integração — antes de qualquer uso além de teste local.
 
 ---
 
 ## 📊 Observabilidade
 
-**Status atual: `print()` no console.** Não há CloudWatch, dashboards ou métricas — cada etapa do pipeline (`[BRONZE]`, `[SILVER]`, `[GOLD]`, `[LOAD]`, `[NAO_VALIDADOS]`) imprime seu progresso diretamente no terminal (ou no log do processo Streamlit) enquanto roda.
+**Status atual: `print()` no console.** Não há CloudWatch, dashboards ou métricas — cada etapa do pipeline (`[SEEDING]`, `[BRONZE]`, `[SILVER]`, `[GOLD]`, `[LOAD]`, `[NAO_VALIDADOS]`) imprime seu progresso diretamente no terminal (ou no log do processo Streamlit) enquanto roda.
 
-Com a API, a observabilidade será aprimorada com:
-
-*   **Logging Estruturado**: bibliotecas de logging com níveis de severidade e formato estruturado (JSON).
-*   **Métricas**: Prometheus e Grafana para performance da API e do pipeline.
-*   **Tracing Distribuído**: OpenTelemetry para requisições através de múltiplos serviços.
+Melhorias futuras de observabilidade (logging estruturado, métricas) ficam a critério de quem for operar o pipeline em um contexto maior — não fazem parte do escopo atual deste repositório.
 
 ---
 
@@ -211,17 +209,18 @@ Com a API, a observabilidade será aprimorada com:
 
 *   **Banco**: como cada tabela é recriada do zero a cada processamento, o "rollback" é reprocessar o arquivo original — ele já foi movido para `medallion/bronze/processed/`, então basta movê-lo de volta para `medallion/bronze/` e rodar o pipeline de novo.
 *   **Camadas intermediárias**: os CSVs em `medallion/silver/` e `medallion/gold/` continuam no disco, permitindo inspecionar ou reimportar manualmente.
+*   **Seeding**: pode ser reexecutado a qualquer momento para gerar uma nova massa de teste, sem impacto nos dados reais já carregados no SQLite.
 *   Não existe backup automático do `.db`, nem versionamento de schema.
-
-Com o PostgreSQL, será possível implementar estratégias de backup e restauração mais robustas, além de versionamento de schema com Alembic.
+*   Estratégias mais robustas de backup, restauração e versionamento de schema (ex.: Alembic) são decisão de quem for integrar o dado ao banco definitivo — fora do escopo deste pipeline.
 
 ---
 
 ## 🗺️ PLANEJAMENTO
 
-- [FALTA FAZER] **API (FastAPI)** com rotas dinâmicas por tabela (CRUD completo)
+- [FALTA FAZER] **Camada de Seeding automatizada** (ex.: com Faker) integrada ao pipeline
 - [FALTA FAZER] **Orquestração (Airflow)** substituindo a execução manual
-- [FALTA FAZER] **Migração para PostgreSQL**
-- [FALTA FAZER] **Workflows de CI/CD** reais
+- [FALTA FAZER] **Workflows de CI/CD** reais para o pipeline
 - [FAZER] Melhorar detecção de números com separador de milhar
 - [FAZER] Expandir validação brasileira (telefone, CEP, datas, etc.)
+
+> A modelagem do banco de destino, migração de dados e qualquer camada de acesso (API, ORM de aplicação, etc.) ficam fora deste planejamento — são responsabilidade de quem for integrar o SQLite gerado a um sistema maior (dev backend, analista ou DBA).
