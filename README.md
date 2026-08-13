@@ -1,226 +1,251 @@
-# ETL (PIPELINE DE ARQUIVOS XLS,CSV PARA SQLITE, VOLTADO À INTEGRAÇÃO COM UM BANCO DE DADOS) 📊🗃️
+# Data Quality & Insight Platform
 
-**É um pipeline de ingestão de dados que recebe arquivos CSV e Excel, aplica limpeza, validação e tipagem automática, e carrega o resultado em um banco SQLite — uma tabela por arquivo processado.** O escopo do projeto termina aqui: ele entrega um SQLite limpo, validado e tipado, pronto para ser **integrado** a um banco de dados definitivo.
+## Plataforma de ingestão, qualidade e análise inteligente de dados
 
-**A modelagem do banco de destino, a estratégia de integração (migração, réplica, ETL adicional, etc.) e as decisões de schema relacional são responsabilidade de quem for trabalhar com esse dado a partir daqui — desenvolvedor backend, analista de dados ou DBA.** Este projeto não define, nem pretende definir, como esse banco final deve ser modelado; ele apenas entrega dados prontos para consumo.
+Este projeto começou como um pipeline de arquivos CSV e Excel para SQLite. A nova proposta amplia seu objetivo: transformar o pipeline em uma **plataforma local de qualidade e inteligência de dados**, capaz de receber arquivos, limpar e validar registros, identificar anomalias, carregar dados aprovados em um banco final e entregar insights analíticos no Streamlit.
 
-O projeto segue a arquitetura **Medalhão (Seeding → Bronze / Silver / Gold)**, com **Python**, **Pandas**, **Streamlit** e **SQLAlchemy** — este último atuando como camada de apoio à persistência, abstraindo a escrita no SQLite e facilitando uma futura troca de engine sem reescrever a lógica de carga.
+O fluxo continua baseado na arquitetura **Medalhão — Bronze, Silver e Gold** —, mas agora possui dois agentes principais e um componente especializado de qualidade:
 
----
+| Componente | Responsabilidade |
+| --- | --- |
+| **Agente de Limpeza e Qualidade** | Padroniza colunas, corrige problemas determinísticos, valida tipos, aplica regras de qualidade e encaminha registros problemáticos para a quarentena. |
+| **Agente de Anomalias** | Analisa registros suspeitos, explica as regras violadas, informa a tabela de origem e produz uma versão rastreável dos dados anômalos para revisão ou reprocessamento. |
+| **Agente de Análise e Insights** | Consulta o banco final, identifica padrões, tendências, indicadores e possíveis explicações, apresentando os resultados no Streamlit. |
 
-## 🏗️ Arquitetura (Medalhão)
+> O agente de qualidade decide sobre a qualidade do dado. O agente de insights interpreta dados aprovados. Essa separação evita que dados suspeitos sejam usados como base para conclusões analíticas sem transparência.
+
+## Objetivo do projeto
+
+O objetivo não é apenas converter arquivos em tabelas. O objetivo é criar um ciclo completo:
+
+> **Receber → preservar → limpar → validar → separar anomalias → publicar dados aprovados → analisar → explicar insights.**
+
+A plataforma deve responder a três perguntas fundamentais:
+
+1. **O dado recebido pode ser utilizado?**
+2. **Quais registros apresentam problemas e em qual tabela deveriam estar?**
+3. **O que os dados aprovados indicam sobre o negócio?**
+
+## Arquitetura geral
 
 ```mermaid
 graph TD
-    Seed[Seeding: geração/preparação<br/>de dados de teste] -->|arquivo sintético ou de amostra| Raw
-    User([Usuário]) -->|Upload manual| ST[Streamlit App]
-    User -->|Copia arquivo| Raw[medallion/bronze/]
-    ST -->|Salva arquivo| Raw
+    U[Usuário] --> ST[Streamlit]
+    ST --> IN[Ingestão CSV / XLS / XLSX]
+    IN --> B[Bronze: arquivo original]
 
-    subgraph "Pipeline ETL (.eda_ETl.py)"
-        Raw -->|.csv / .xlsx / .xls| Extract[Extract: Bronze]
-        Extract --> EDA[EDA automática]
-        EDA --> Silver[Transform: Silver<br/>limpeza + validação]
-        Silver -->|CSV| SilverDir[(medallion/silver/)]
-        Silver --> Gold[Transform: Gold<br/>conversão de tipos]
-        Gold --> Load[Load]
-    end
+    B --> P[Perfil do arquivo e contrato do schema]
+    P --> L[Agente de Limpeza e Qualidade]
+    L --> S[Silver: dados normalizados]
+    L --> Q[Quarentena de anomalias]
 
-    Load --> DB[(medallion/gold/database/<br/>tabela_dados_processados.db)]
-    Silver -->|Anomalias| DB2[(dados_nao_validados.db)]
+    Q --> A[Agente de Anomalias]
+    A --> R[Relatório de anomalias<br/>versão anomalizada + tabela indicada]
+    R --> ST
 
-    Raw -.->|arquivo original| Processed[medallion/bronze/processed/]
+    S --> G[Gold: dados aprovados]
+    G --> DB[(Banco final SQLite)]
 
-    DB -.->|integração manual: dev/analista/DBA| Ext[(Banco de dados<br/>definitivo)]
+    DB --> I[Agente de Análise e Insights]
+    I --> INS[Insights, métricas e recomendações]
+    INS --> ST
+
+    Q -. correção/revisão .-> B
 ```
 
----
+## Camadas de dados
 
-## 📂 Estrutura do Projeto
+| Camada | Objetivo | Pode ser consumida pelo agente de insights? |
+| --- | --- | --- |
+| **Bronze** | Preservar o arquivo exatamente como recebido, incluindo dados misturados, nulos e possíveis erros. | Não. Serve como fonte de auditoria e reprocessamento. |
+| **Silver** | Normalizar nomes, formatos e tipos; registrar o resultado das regras de qualidade sem esconder a origem dos problemas. | Apenas para análises de qualidade, não para indicadores oficiais. |
+| **Quarentena** | Armazenar registros anômalos, motivos, regras violadas, severidade, lote e status de tratamento. | Não por padrão. Pode ser consultada em uma tela específica de qualidade. |
+| **Gold** | Conter somente dados aprovados ou explicitamente aceitos com alerta, prontos para consumo analítico. | Sim. É a fonte oficial do agente de insights. |
 
-| Diretório / Arquivo | Descrição | Tecnologia |
-| :--- | :--- | :--- |
-| `ETL_PIPELINE/medallion/seeding/` | Camada Seeding — geração ou preparação de dados de teste/amostra, **anterior à Bronze**, usada para popular o pipeline antes da ingestão de dados reais | Python / Faker (planejado) |
-| `ETL_PIPELINE/medallion/bronze/` | Camada Bronze — arquivos originais (reais ou vindos do seeding) aguardando processamento | — |
-| `ETL_PIPELINE/medallion/bronze/processed/` | Arquivos já processados, movidos automaticamente | — |
-| `ETL_PIPELINE/medallion/silver/` | CSVs com limpeza estrutural e validação (`*_silver.csv`) | Pandas |
-| `ETL_PIPELINE/medallion/gold/` | CSVs com tipos finais (`*_gold.csv`), prontos para carga no banco relacional | Pandas |
-| `ETL_PIPELINE/medallion/gold/database/tabela_dados_processados.db` | Banco principal — uma tabela por arquivo processado, pronto para integração externa | SQLite |
-| `ETL_PIPELINE/medallion/gold/database/dados_nao_validados.db` | Banco de anomalias — linhas rejeitadas, acumulando | SQLite |
-| `ETL_PIPELINE/eda/.eda_ETl.py` | Lógica do pipeline: extract, EDA, transform silver/gold, load (via SQLAlchemy), validação | Python 3 / SQLAlchemy |
-| `ETL_PIPELINE/streamlit/app.py` | Interface web para upload manual de arquivos | Streamlit |
-| `README.md` | Documentação do projeto | — |
+O fato de um arquivo conter colunas ou registros misturados não é um problema da Bronze. A Bronze deve preservar o original. A classificação ocorre durante a transformação para Silver, e a decisão de publicação ocorre antes do Gold.
 
----
+## Agente de Limpeza e Qualidade
 
-## 🚀 Como Rodar Localmente
+O Agente de Limpeza e Qualidade é responsável pelas regras determinísticas e reproduzíveis. Ele não deve depender exclusivamente de texto gerado por um modelo de linguagem para aprovar ou rejeitar dados.
 
-### Pré-requisitos
-* Python 3.10+
-* pip
+Suas tarefas incluem padronizar nomes de colunas, remover espaços indevidos, converter tipos, identificar nulos, validar domínios permitidos, conferir chaves, verificar duplicidades e aplicar regras de consistência de negócio. Cada ocorrência deve gerar um registro estruturado com código da regra, severidade, coluna, linha, valor observado e recomendação.
 
-### 1. Instalar dependências
+Exemplos de regras para o domínio de compras:
+
+| Código | Regra | Severidade inicial |
+| --- | --- | --- |
+| `STRUCT_001` | As colunas obrigatórias existem. | Crítica |
+| `TYPE_001` | Quantidade, preço, desconto e valor total são numéricos. | Crítica |
+| `BUSINESS_001` | O valor total é compatível com quantidade, preço e desconto. | Crítica |
+| `BUSINESS_002` | A quantidade é maior que zero. | Crítica |
+| `BUSINESS_003` | O desconto está entre 0 e 100. | Crítica |
+| `DOMAIN_001` | Canal, pagamento e indicadores possuem valores permitidos. | Erro |
+| `DUP_001` | O identificador da compra não se repete no mesmo lote. | Crítica |
+| `BUSINESS_004` | Relações entre idade e tempo de cliente são avaliadas. | Alerta |
+
+O agente deve separar **erro**, **alerta** e **anomalia exploratória**. Uma combinação incomum não deve ser automaticamente excluída sem uma regra de negócio que justifique a rejeição.
+
+## Agente de Anomalias
+
+O Agente de Anomalias recebe os registros enviados para a quarentena e produz uma visão compreensível do problema. A saída esperada não é apenas uma mensagem genérica como “linha inválida”. Ela deve indicar:
+
+| Informação | Exemplo |
+| --- | --- |
+| `batch_id` | `2026-08-12-001` |
+| `record_id` | `linha_000127` |
+| `source_file` | `vendas_agosto.csv` |
+| `source_table` | `fato_compras` |
+| `rule_code` | `BUSINESS_001` |
+| `severity` | `critical`, `error` ou `warning` |
+| `observed_value` | Valor total encontrado no arquivo |
+| `expected_value` | Valor calculado pela regra |
+| `recommended_action` | Corrigir, revisar, aceitar com alerta ou rejeitar |
+| `anomaly_table` | Nome da tabela de quarentena onde o registro foi gravado |
+
+A “versão anomalizada” deve ser entendida como uma **versão dos dados que preserva os registros problemáticos e adiciona metadados de qualidade**. Ela não deve substituir a Bronze, a Silver aprovada ou o Gold.
+
+O agente pode gerar explicações em linguagem natural, mas sua decisão deve permanecer vinculada às regras estruturadas. Correções automáticas só devem ocorrer quando forem determinísticas, como remover espaços extras ou normalizar um separador decimal conhecido.
+
+## Banco final e tabelas de qualidade
+
+A proposta mantém um banco final para dados aprovados e acrescenta uma estrutura própria para qualidade e observabilidade.
+
+| Banco ou tabela | Conteúdo |
+| --- | --- |
+| `tabela_dados_processados.db` | Dados Gold aprovados para consumo analítico. |
+| `dados_nao_validados.db` | Registros em quarentena e seus motivos. |
+| `pipeline_runs` | Histórico dos lotes e estados de processamento. |
+| `quality_findings` | Uma ocorrência por regra violada, com severidade e status. |
+| `anomaly_reports` | Resumos produzidos pelo Agente de Anomalias. |
+| `insight_reports` | Insights gerados a partir do banco final, com data e escopo da análise. |
+
+Cada registro deve possuir `batch_id` e `record_id`. Isso permite responder de onde o dado veio, qual regra falhou, quem analisou o problema, se ele foi corrigido e se foi reprocessado.
+
+## Agente de Análise e Insights
+
+O Agente de Análise e Insights consulta somente o banco Gold por padrão. Ele pode calcular métricas, comparar períodos, encontrar tendências, destacar mudanças relevantes e sugerir perguntas para investigação.
+
+A interface Streamlit deve apresentar os insights com transparência. Cada resposta precisa informar a tabela consultada, as colunas utilizadas, o período analisado, as métricas calculadas e, quando possível, uma visualização ou tabela de apoio.
+
+O agente não deve inventar métricas nem consultar tabelas de quarentena silenciosamente. Caso o usuário queira analisar anomalias, isso deve ocorrer em uma seção explícita de **Qualidade e Anomalias**, separada da seção de **Insights do negócio**.
+
+Exemplos de entregas no Streamlit:
+
+| Área da interface | Entrega |
+| --- | --- |
+| **Ingestão** | Upload, prévia e identificação do lote. |
+| **Qualidade** | Percentual de linhas aprovadas, alertas, rejeições e principais regras violadas. |
+| **Anomalias** | Tabela indicada, registros anomalizados, motivo e recomendação. |
+| **Dados aprovados** | Consulta às tabelas Gold e indicadores básicos. |
+| **Insights** | Pergunta em linguagem natural, resposta explicada, métricas e gráficos. |
+| **Histórico** | Execuções, versões, reprocessamentos e relatórios anteriores. |
+
+## Fluxo recomendado no Streamlit
+
+O Streamlit deixa de ser apenas uma tela de upload e passa a ser o centro de operação da plataforma.
+
+```mermaid
+sequenceDiagram
+    participant U as Usuário
+    participant S as Streamlit
+    participant L as Agente de Limpeza
+    participant Q as Quarentena
+    participant A as Agente de Anomalias
+    participant DB as Banco Gold
+    participant I as Agente de Insights
+
+    U->>S: Envia arquivo
+    S->>L: Inicia lote e valida schema
+    L->>Q: Registra linhas anômalas
+    L->>DB: Publica dados aprovados
+    L-->>S: Retorna relatório de qualidade
+    S->>A: Solicita análise das anomalias
+    A-->>S: Retorna motivos, tabela e recomendações
+    U->>S: Faz pergunta analítica
+    S->>I: Consulta o banco Gold
+    I->>DB: Executa análise autorizada
+    DB-->>I: Retorna dados agregados
+    I-->>S: Entrega insight fundamentado
+```
+
+## Mudança de posicionamento
+
+O nome e a descrição do projeto devem deixar de enfatizar apenas “CSV para DB”. A nova descrição recomendada é:
+
+> **Plataforma local de qualidade e análise inteligente de dados que ingere arquivos tabulares, preserva a origem, normaliza registros, identifica anomalias, publica dados aprovados em SQLite e entrega insights analíticos pelo Streamlit.**
+
+O projeto ainda é um pipeline de dados, mas agora possui valor de portfólio em três áreas: engenharia de dados, qualidade de dados e análise assistida por agente.
+
+## Limites importantes da proposta
+
+A proposta é forte, mas deve ser implementada com uma separação clara entre automação confiável e geração probabilística. O agente de limpeza deve começar com funções e regras testáveis. O agente de anomalias pode usar inteligência artificial para explicar e priorizar achados, desde que não altere dados sem rastreabilidade. O agente de insights deve gerar respostas baseadas em consultas, métricas e tabelas reais do banco.
+
+Não é recomendável começar com três agentes autônomos conversando livremente. Para a primeira versão, prefira um orquestrador simples que execute etapas com contratos definidos: limpeza produz dados e findings; anomalias produz relatório; análise produz insights citando a origem.
+
+## Estrutura proposta do projeto
+
+```text
+ETL_PIPELINE/
+├── agents/
+│   ├── cleaning_agent.py
+│   ├── anomaly_agent.py
+│   ├── insight_agent.py
+│   └── orchestrator.py
+├── quality/
+│   ├── rules.py
+│   ├── schemas.py
+│   ├── quarantine.py
+│   └── reports.py
+├── medallion/
+│   ├── bronze/
+│   ├── silver/
+│   ├── quarantine/
+│   └── gold/
+│       └── database/
+├── eda/
+│   └── .eda_ETl.py
+└── streamlit/
+    └── app.py
+```
+
+A estrutura acima é uma direção arquitetural. A implementação pode ser incremental, sem exigir a criação de todos os agentes na primeira etapa.
+
+## Roadmap de implementação
+
+| Fase | Entrega |
+| --- | --- |
+| **Fase 1** | Corrigir o modelo de qualidade: `batch_id`, `record_id`, códigos de regra, severidade e status. |
+| **Fase 2** | Criar a tela Streamlit de qualidade e anomalias. |
+| **Fase 3** | Implementar o Agente de Anomalias como gerador de explicações e recomendações. |
+| **Fase 4** | Criar o Agente de Insights para consultas e métricas do Gold. |
+| **Fase 5** | Adicionar histórico de relatórios, reprocessamento e avaliação da qualidade das respostas. |
+
+## Como executar
+
+### Instalação
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Rodar via interface web (Streamlit)
+### Interface Streamlit
+
 ```bash
 streamlit run ETL_PIPELINE/streamlit/app.py
 ```
 
-### 3. Rodar via terminal (apenas ETL)
+### Execução do pipeline
+
 ```bash
 python ETL_PIPELINE/eda/.eda_ETl.py
 ```
 
----
+## Estado atual e próximos passos
 
-## ⚙️ Como o Pipeline Funciona
+A implementação atual já realiza ingestão, transformação Silver, tipagem Gold, carga em SQLite e armazenamento básico de anomalias. A interface Streamlit ainda está centrada no upload e na confirmação do nome da tabela. O próximo passo prioritário é transformar o retorno do pipeline em um relatório estruturado de qualidade e disponibilizá-lo na interface.
 
-O pipeline foi desenhado de ponta a ponta pensando na carga final em um banco de dados relacional: cada camada existe para deixar o dado cada vez mais próximo do formato que uma tabela relacional exige (schema definido, tipos corretos, sem duplicidade, sem nulos inesperados).
+Depois disso, o Agente de Anomalias pode explicar os achados e indicar a tabela de quarentena. Somente após o banco Gold estar estável e consultável deve ser implementado o Agente de Insights.
 
-### Seeding (Pré-Bronze)
-- Camada **anterior à Bronze**, usada para gerar ou preparar dados de teste/amostra antes da chegada de dados reais
-- Objetivo: permitir validar o pipeline e o schema do banco de dados relacional sem depender de arquivos reais
-- Pode gerar arquivos sintéticos (ex.: com Faker) ou apenas selecionar/anonimizar amostras de arquivos existentes
-- O resultado da camada de Seeding é depositado em `medallion/bronze/`, seguindo o mesmo fluxo de um arquivo real — o pipeline não diferencia a origem
+## Referência
 
-### Bronze (Extract)
-- Lê arquivos **CSV** (tentando `;` e depois `,`) e **Excel** (`.xlsx` / `.xls`)
-- Sem nenhuma transformação — dado bruto, como veio (seja de origem real ou de seeding)
-
-### Silver (Transform + Validação)
-- Padroniza nomes de colunas (minúsculas, sem caracteres especiais)
-- Remove linhas **duplicadas**
-- Remove linhas com **valores nulos** (exceto e-mail vazio, que vira anomalia `ausente`)
-- Remove espaços em branco no início/fim dos textos
-- **Valida e-mails**: válido → mantém | inválido → `invalido` | vazio → `ausente`
-- **Valida CPF e CNPJ** (dígitos verificadores)
-- Linhas com qualquer anomalia são separadas com `motivo_rejeicao` e vão para `dados_nao_validados.db`
-
-### Gold (Tipagem)
-- Converte automaticamente colunas para o tipo real: **booleano** (Sim/Não, Yes/No), **número** (com vírgula decimal) e **data**
-- Gera o `*_gold.csv` pronto para consumo — já no formato esperado por um schema relacional
-
-### Load (Persistência via SQLAlchemy)
-- A escrita no banco é feita através do **SQLAlchemy**, que atua como camada de apoio à persistência entre o pipeline e o SQLite — o pipeline não executa SQL cru, ele usa o SQLAlchemy como intermediário (engine + conexão)
-- Grava a tabela no banco principal `tabela_dados_processados.db`
-- **Não substitui tabela existente**: se a tabela já existe, o pipeline é **rejeitado** — é preciso escolher outro nome
-- Por o SQLAlchemy abstrair o dialeto do banco, trocar o SQLite por outra engine relacional no futuro (ex.: PostgreSQL) tende a exigir pouca ou nenhuma mudança na lógica de carga — mas essa troca **não faz parte do escopo deste pipeline**
-- A partir daqui, o dado está pronto para ser consumido e integrado ao banco definitivo por quem for responsável por essa etapa (dev backend, analista ou DBA)
-
-### Banco de Anomalias
-- Toda linha rejeitada na validação é **acumulada** em `dados_nao_validados.db` (tabela `dados_nao_validados`), com o motivo de cada rejeição
-
----
-
-## 🔢 Regras do Nome da Tabela
-
-Regras aplicadas na validação do nome da tabela (centradas em `validar_nome_tabela`):
-
-- Apenas letras minúsculas (a-z)
-- Números (0-9) permitidos
-- `_` (underscore) permitido
-- Deve começar com **letra**
-- Sem espaços
-- Sem acentos
-- Sem caracteres especiais (`-`, `.`, `/`, `@`, etc.)
-- Limite de **63 caracteres**
-- Palavras reservadas do SQL não são permitidas
-- A tabela deve **existir** para ser gravada — duplicidade rejeita o pipeline
-
-**Exemplos válidos:** `vendas`, `clientes`, `vendas_2026`, `clientes_sp`, `produtos_2026`
-**Exemplos inválidos:** `123vendas`, `vendas janeiro`, `vendas-janeiro`, `vendas.janeiro`, `vendas@2026`, `vendas_áudio`
-
-O Streamlit **sanitiza o nome automaticamente enquanto o usuário digita**, aplicando essas regras em tempo real.
-
----
-
-## 🖥️ Interface Streamlit
-
-- Envia um arquivo **CSV ou Excel** (real ou vindo da camada de Seeding) e mostra uma **prévia** dos dados
-- Abre um popup para **confirmar/alterar o nome da tabela** (validado em tempo real)
-- Ao confirmar, **ativa o pipeline** (seeding opcional → bronze → silver → gold → banco relacional)
-- O Streamlit **não consulta o banco de dados**: apenas envia o arquivo e o nome da tabela para o pipeline; se o pipeline rejeitar (ex.: tabela duplicada), o erro é exibido em vermelho
-
----
-
-## 🤝 Responsabilidade de Integração
-
-Este pipeline **não inclui API, autenticação, nem definição de schema do banco final**. O SQLAlchemy usado aqui serve apenas como camada de apoio à **persistência interna do pipeline** (escrever no SQLite) — ele não define modelos de domínio, não expõe endpoints e não modela o banco de destino. Ele entrega um arquivo SQLite validado e tipado — o que acontece depois é responsabilidade de quem for consumir esse dado:
-
-*   **Desenvolvedor Backend**: decide como o dado do SQLite será lido, transformado em modelos de aplicação e exposto (API própria, job de sincronização, etc.), fora do escopo deste repositório.
-*   **Analista de Dados**: usa o SQLite como fonte para análises, dashboards ou cargas em ferramentas de BI.
-*   **DBA**: define a modelagem do banco de dados definitivo (relacional ou não), estratégia de migração/replicação do SQLite para esse banco, índices, constraints e política de versionamento de schema.
-
-O pipeline garante apenas que o dado que chega até essas pessoas está **limpo, validado e tipado** — não garante nada sobre como ele deve ser modelado no destino final.
-
----
-
-## 📝 Notas de Desenvolvimento
-
-*   **Escopo do pipeline**: vai do arquivo bruto (CSV/Excel) até um SQLite validado e tipado. Não há API, autenticação ou definição de banco definitivo neste repositório.
-*   **Seeding como camada de apoio**: útil para testes de schema e de carga sem exigir dados reais logo de início; não é uma etapa obrigatória do fluxo de produção.
-*   **Reprocessamento**: tabela duplicada → pipeline **rejeitado** (sem substituição). Use um nome diferente ou mova o arquivo de volta da `processed/` para a `bronze/`.
-*   **Camadas em disco**: `medallion/silver/` e `medallion/gold/` guardam CSVs intermediários para depuração.
-*   **Anomalias**: `dados_nao_validados.db` acumula as linhas rejeitadas com o motivo — útil para auditoria de qualidade de dados.
-*   **Streamlit e terminal compartilham a mesma função** (`processar_arquivo`).
-
----
-
-## 🌍 Ambientes
-
-**Status atual: um único ambiente, local.** Não existem ambientes separados de staging/produção, branch protection, nem state remoto — o projeto roda inteiro na máquina de quem executa, sem distinção de ambiente.
-
-| Ambiente | Branch | Onde roda | Trigger |
-|:--|:--|:--|:--|
-| **Local (único existente)** | qualquer | Máquina do usuário | Execução manual |
-| ~~Staging~~ | — | — | Não existe |
-| ~~Produção~~ | — | — | Não existe |
-
----
-
-## 🔒 Segurança e regras
-
-O escopo de segurança deste projeto é o do próprio pipeline local — autenticação, controle de acesso e criptografia em trânsito são responsabilidade de quem for integrar o SQLite resultante a um sistema maior.
-
-*   **Tabela duplicada**: o pipeline **rejeita** a inserção se a tabela já existir — o usuário deve informar um nome alternativo para não substituir dados.
-*   **Dados de Seeding**: se gerados sinteticamente, não representam dados sensíveis reais; se derivados de amostras reais, devem ser anonimizados antes de entrar na Bronze.
-*   **Todo CSV/Excel é tratado no pipeline para virar dado consumível**: tanto no formato quanto em valores duplicados e anomalias.
-*   **O FRONT (STREAMLIT) NÃO SABE QUEM É O BANCO**: apenas envia o arquivo para o pipeline.
-*   **Sem gestão de credenciais externas**: o projeto não expõe nem consome serviços externos — não há `.env` de produção, JWT ou segredos a gerenciar neste escopo.
-
-> ⚠️ Se este projeto vier a lidar com dados sensíveis de verdade (dados pessoais, de saúde, financeiros), isso precisa ser resolvido — pela equipe responsável pela integração — antes de qualquer uso além de teste local.
-
----
-
-## 📊 Observabilidade
-
-**Status atual: `print()` no console.** Não há CloudWatch, dashboards ou métricas — cada etapa do pipeline (`[SEEDING]`, `[BRONZE]`, `[SILVER]`, `[GOLD]`, `[LOAD]`, `[NAO_VALIDADOS]`) imprime seu progresso diretamente no terminal (ou no log do processo Streamlit) enquanto roda.
-
-Melhorias futuras de observabilidade (logging estruturado, métricas) ficam a critério de quem for operar o pipeline em um contexto maior — não fazem parte do escopo atual deste repositório.
-
----
-
-## 🔄 Rollback
-
-**Status atual: manual, via arquivos.**
-
-*   **Banco**: como cada tabela é recriada do zero a cada processamento, o "rollback" é reprocessar o arquivo original — ele já foi movido para `medallion/bronze/processed/`, então basta movê-lo de volta para `medallion/bronze/` e rodar o pipeline de novo.
-*   **Camadas intermediárias**: os CSVs em `medallion/silver/` e `medallion/gold/` continuam no disco, permitindo inspecionar ou reimportar manualmente.
-*   **Seeding**: pode ser reexecutado a qualquer momento para gerar uma nova massa de teste, sem impacto nos dados reais já carregados no SQLite.
-*   Não existe backup automático do `.db`, nem versionamento de schema.
-*   Estratégias mais robustas de backup, restauração e versionamento de schema (ex.: Alembic) são decisão de quem for integrar o dado ao banco definitivo — fora do escopo deste pipeline.
-
----
-
-## 🗺️ PLANEJAMENTO
-
-- [FALTA FAZER] **Camada de Seeding automatizada** (ex.: com Faker) integrada ao pipeline
-- [FALTA FAZER] **Orquestração (Airflow)** substituindo a execução manual
-- [FALTA FAZER] **Workflows de CI/CD** reais para o pipeline
-- [FAZER] Melhorar detecção de números com separador de milhar
-- [FAZER] Expandir validação brasileira (telefone, CEP, datas, etc.)
-
-> A modelagem do banco de destino, migração de dados e qualquer camada de acesso (API, ORM de aplicação, etc.) ficam fora deste planejamento — são responsabilidade de quem for integrar o SQLite gerado a um sistema maior (dev backend, analista ou DBA).
+[1]: https://github.com/GeorgeLucas1/Pipeline_csv_to_db "Repositório Pipeline_csv_to_db"
