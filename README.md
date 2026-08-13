@@ -296,6 +296,3 @@ A implementação atual realiza ingestão, transformação Silver, tipagem Gold,
 
 Depois disso, o Agente de Anomalias pode explicar os achados e indicar a tabela de quarentena. Somente após o banco Gold estar estável e consultável deve ser implementado o Agente de Insights.
 
-## Referência
-
-[1]: https://github.com/GeorgeLucas1/Pipeline_csv_to_db "Repositório Pipeline_csv_to_db"
