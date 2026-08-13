@@ -117,15 +117,15 @@ A proposta mantém um **PostgreSQL como banco persistente central**, executado l
 | `pipeline_runs` | Histórico dos lotes e estados de processamento. |
 | `quality_findings` | Uma ocorrência por regra violada, com severidade e status. |
 | `anomaly_reports` | Resumos produzidos pelo Agente de Anomalias. |
-| PostgreSQL / schema `insights` / tabela `insight_reports` | Insights gerados a partir do Gold, com pergunta, consulta, métricas, resposta, escopo, data e versão do agente. |
+| PostgreSQL / banco `insights` / tabela `insight_reports` | Insights gerados a partir do Gold, identificando a tabela analisada, a pergunta, a consulta, as métricas, a resposta, o escopo, a data e a versão do agente. |
 
 Cada registro deve possuir `batch_id` e `record_id`. Isso permite responder de onde o dado veio, qual regra falhou, quem analisou o problema, se ele foi corrigido e se foi reprocessado.
 
 ## Agente de Análise e Insights
 
-O Agente de Análise e Insights consulta somente o schema `gold` do PostgreSQL por padrão. Ele pode calcular métricas, comparar períodos, encontrar tendências, destacar mudanças relevantes e sugerir perguntas para investigação. Depois de produzir uma resposta, o agente deve salvar o resultado no schema `insights`, permitindo consultar o histórico de análises no Streamlit.
+O Agente de Análise e Insights consulta somente o schema `gold` do banco principal por padrão. Ele pode calcular métricas, comparar períodos, encontrar tendências, destacar mudanças relevantes e sugerir perguntas para investigação. Depois de produzir uma resposta, o agente deve salvar o resultado no banco PostgreSQL chamado `insights`, permitindo consultar o histórico de análises no Streamlit.
 
-A interface Streamlit deve apresentar os insights com transparência. Cada resposta precisa informar a tabela consultada no PostgreSQL, as colunas utilizadas, o período analisado, as métricas calculadas e, quando possível, uma visualização ou tabela de apoio. O texto, a consulta executada, os filtros e os resultados resumidos devem ser persistidos em `insights.insight_reports`.
+A interface Streamlit deve apresentar os insights com transparência. Cada resposta precisa informar a tabela consultada no PostgreSQL, as colunas utilizadas, o período analisado, as métricas calculadas e, quando possível, uma visualização ou tabela de apoio. O texto, a consulta executada, os filtros e os resultados resumidos devem ser persistidos na tabela `insight_reports` do banco `insights`.
 
 O agente não deve inventar métricas nem consultar tabelas de quarentena silenciosamente. Caso o usuário queira analisar anomalias, isso deve ocorrer em uma seção explícita de **Qualidade e Anomalias**, separada da seção de **Insights do negócio**.
 
@@ -223,18 +223,37 @@ A estrutura acima é uma direção arquitetural. A implementação pode ser incr
 
 ## Persistência PostgreSQL via Docker
 
-O PostgreSQL é o banco persistente principal da plataforma. Ele deve armazenar os dados Gold, as execuções do pipeline, os achados de qualidade, os registros de quarentena e os relatórios de insights. O Docker fornece um ambiente reproduzível para executar o banco localmente, enquanto o SQLAlchemy realiza a conexão entre o pipeline e o PostgreSQL. A configuração Docker já está documentada e disponível em `docker-compose.yml`; a migração completa das funções atuais de SQLite para PostgreSQL é uma etapa de implementação do roadmap.
+A camada Gold possui dois destinos lógicos: o banco principal, que guarda as tabelas Gold aprovadas, e o banco PostgreSQL `insights`, que guarda o nome da tabela analisada e os resultados produzidos pelo agente de análise.
 
-A separação lógica recomendada é feita por schemas:
+O PostgreSQL é o servidor persistente principal da plataforma e é executado via Docker. Dentro desse servidor, a plataforma utiliza um banco principal para os dados Gold, qualidade e metadados, além de um banco separado chamado `insights`. O banco `insights` armazena os resultados das análises, incluindo obrigatoriamente o nome da tabela Gold analisada e os insights coletados. O SQLAlchemy realiza as conexões entre o pipeline, o banco Gold e o banco `insights`. A configuração Docker já está documentada e disponível em `docker-compose.yml`; a migração completa das funções atuais de SQLite para PostgreSQL é uma etapa de implementação do roadmap.
 
-| Schema | Responsabilidade |
+A separação lógica recomendada combina schemas no banco principal com um banco separado chamado `insights`:
+
+| Estrutura | Responsabilidade |
 | --- | --- |
 | `gold` | Tabelas aprovadas para consumo analítico. |
 | `quality` | Execuções, regras, findings, quarentena e decisões dos agentes. |
-| `insights` | Perguntas, consultas, métricas, respostas e histórico de insights. |
+| banco `insights` | Perguntas, nome da tabela analisada, consultas, métricas, respostas e histórico de insights. |
 | `metadata` | Lotes, arquivos, hashes, versões de schema e auditoria. |
 
-O fluxo de persistência é: **arquivo Bronze → transformação e validação → PostgreSQL `gold` + PostgreSQL `quality` → Agente de Insights → PostgreSQL `insights` → Streamlit**. O Streamlit lê os relatórios persistidos; ele não deve ser o local definitivo de armazenamento das respostas.
+A tabela principal do banco `insights` deve possuir, no mínimo, a seguinte estrutura conceitual:
+
+| Campo | Conteúdo |
+| --- | --- |
+| `insight_id` | Identificador único do insight. |
+| `source_table` | Nome da tabela Gold analisada. |
+| `source_database` | Banco ou conexão de origem dos dados analisados. |
+| `question` | Pergunta ou objetivo da análise. |
+| `insight_text` | Insight gerado em linguagem natural. |
+| `metrics_json` | Métricas e valores que sustentam o insight. |
+| `query_text` | Consulta ou plano de consulta utilizado, quando aplicável. |
+| `filters_json` | Filtros e período considerados. |
+| `created_at` | Data e hora da geração. |
+| `agent_version` | Versão do agente responsável pela análise. |
+
+Assim, para cada análise, o Streamlit consegue exibir **qual tabela foi analisada, quais filtros foram usados, quais métricas foram encontradas e qual insight foi produzido**.
+
+O fluxo de persistência é: **arquivo Bronze → transformação e validação → banco principal com Gold e Quality → Agente de Insights → banco PostgreSQL `insights` → Streamlit**. O Streamlit lê os relatórios persistidos; ele não deve ser o local definitivo de armazenamento das respostas.
 
 ## Como executar
 
