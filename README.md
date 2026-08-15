@@ -2,7 +2,7 @@
 
 ## Plataforma de ingestão, qualidade e análise inteligente de dados
 
-Este projeto começou como um pipeline de arquivos CSV e Excel para SQLite. A nova proposta amplia seu objetivo: transformar o pipeline em uma **plataforma local de qualidade e inteligência de dados**, capaz de receber arquivos, limpar e validar registros, identificar anomalias, persistir dados aprovados e relatórios em PostgreSQL executado via Docker e entregar insights analíticos no Streamlit.
+Este projeto começou como um pipeline de arquivos CSV e Excel para SQLite. A nova proposta amplia seu objetivo: transformar o pipeline em uma **plataforma local de qualidade e inteligência de dados**, capaz de receber arquivos, limpar e validar registros, identificar anomalias, gerar um SQLite de insights e permitir que o PostgreSQL consuma esse arquivo posteriormente.
 
 O fluxo continua baseado na arquitetura **Medalhão — Bronze, Silver e Gold** —, mas agora possui dois agentes principais e um componente especializado de qualidade:
 
@@ -10,9 +10,9 @@ O fluxo continua baseado na arquitetura **Medalhão — Bronze, Silver e Gold** 
 | --- | --- |
 | **Agente de Limpeza e Qualidade** | Padroniza colunas, corrige problemas determinísticos, valida tipos, aplica regras de qualidade e encaminha registros problemáticos para a quarentena. |
 | **Agente de Anomalias** | Analisa registros suspeitos, explica as regras violadas, informa a tabela de origem e produz uma versão rastreável dos dados anômalos para revisão ou reprocessamento. |
-| **Agente de Análise e Insights** | Consulta o banco final, identifica padrões, tendências, indicadores e possíveis explicações, apresentando os resultados no Streamlit. |
+| **Agente de Análise e Insights** | Recebe os dados anomalizados produzidos pelo Agente de Anomalias, identifica padrões, tendências e indicadores, gera o SQLite `insights.db` e disponibiliza o resultado para consumo posterior do PostgreSQL. |
 
-> O agente de qualidade decide sobre a qualidade do dado. O agente de insights interpreta dados aprovados. Essa separação evita que dados suspeitos sejam usados como base para conclusões analíticas sem transparência.
+> O agente de qualidade decide sobre a qualidade do dado. O agente de anomalias prepara os dados anomalizados, e o agente de insights interpreta exclusivamente essa entrada estruturada. O PostgreSQL recebe o banco SQLite gerado ao final.
 
 ## Objetivo do projeto
 
@@ -23,8 +23,10 @@ O objetivo não é apenas converter arquivos em tabelas. O objetivo é persistir
 A plataforma deve responder a três perguntas fundamentais:
 
 1. **O dado recebido pode ser utilizado?**
-2. **Quais registros apresentam problemas e em qual tabela deveriam estar?**
-3. **O que os dados aprovados indicam sobre o negócio?**
+
+1. **Quais registros apresentam problemas e em qual tabela deveriam estar?**
+
+1. **O que os dados aprovados indicam sobre o negócio?**
 
 ## Arquitetura geral
 
@@ -40,15 +42,14 @@ graph TD
     L --> Q[Quarentena de anomalias]
 
     Q --> A[Agente de Anomalias]
-    A --> R[Relatório de anomalias<br/>versão anomalizada + tabela indicada]
-    R --> ST
+    A --> R[Dados anomalizados + tabela indicada]
+    R --> I[Agente de Análise e Insights]
+    I --> INS[(SQLite Gold/database/insights.db)]
+    INS --> PG[PostgreSQL recebe e armazena insights]
+    PG --> ST[Streamlit]
 
     S --> G[Gold: dados aprovados]
-    G --> DB[(PostgreSQL: dados Gold, qualidade e insights)]
-
-    DB --> I[Agente de Análise e Insights]
-    I --> INS[Insights, métricas e recomendações]
-    INS --> ST
+    G --> DB[(PostgreSQL: dados Gold)]
 
     Q -. correção/revisão .-> B
 ```
@@ -60,7 +61,7 @@ graph TD
 | **Bronze** | Preservar o arquivo exatamente como recebido, incluindo dados misturados, nulos e possíveis erros. | Não. Serve como fonte de auditoria e reprocessamento. |
 | **Silver** | Normalizar nomes, formatos e tipos; registrar o resultado das regras de qualidade sem esconder a origem dos problemas. | Apenas para análises de qualidade, não para indicadores oficiais. |
 | **Quarentena** | Armazenar registros anômalos, motivos, regras violadas, severidade, lote e status de tratamento. | Não por padrão. Pode ser consultada em uma tela específica de qualidade. |
-| **Gold** | Conter somente dados aprovados ou explicitamente aceitos com alerta, prontos para consumo analítico. | Sim. É a fonte oficial do agente de insights e fica persistida no PostgreSQL. |
+| **Gold** | Conter somente dados aprovados ou explicitamente aceitos com alerta, prontos para consumo analítico. | Sim. É a fonte oficial do agente de insights; o agente gera o SQLite `insights.db` a partir dessa camada. |
 
 O fato de um arquivo conter colunas ou registros misturados não é um problema da Bronze. A Bronze deve preservar o original. A classificação ocorre durante a transformação para Silver, e a decisão de publicação ocorre antes do Gold.
 
@@ -108,7 +109,7 @@ O agente pode gerar explicações em linguagem natural, mas sua decisão deve pe
 
 ## Banco final e tabelas de qualidade
 
-A proposta mantém um **PostgreSQL como banco persistente central**, executado localmente por Docker, para dados Gold, qualidade, anomalias, execuções e insights. Os arquivos Bronze, Silver e a Quarentena podem continuar no sistema de arquivos para preservar o histórico bruto e facilitar depuração, mas os resultados operacionais e analíticos devem ser persistidos no PostgreSQL.
+A proposta mantém o **PostgreSQL como banco de destino dos dados Gold**, executado localmente por Docker. O Agente de Análise e Insights não grava diretamente no PostgreSQL: ele gera o arquivo SQLite `medallion/gold/database/insights.db`. Em uma etapa posterior, uma skill de integração lê esse SQLite e importa suas tabelas para o PostgreSQL. Dessa forma, o SQLite funciona como artefato intermediário reproduzível e o PostgreSQL como banco consumidor.
 
 | Banco ou tabela | Conteúdo |
 | --- | --- |
@@ -117,15 +118,15 @@ A proposta mantém um **PostgreSQL como banco persistente central**, executado l
 | `pipeline_runs` | Histórico dos lotes e estados de processamento. |
 | `quality_findings` | Uma ocorrência por regra violada, com severidade e status. |
 | `anomaly_reports` | Resumos produzidos pelo Agente de Anomalias. |
-| PostgreSQL / banco `insights` / tabela `insight_reports` | Insights gerados a partir do Gold, identificando a tabela analisada, a pergunta, a consulta, as métricas, a resposta, o escopo, a data e a versão do agente. |
+| `medallion/gold/database/insights.db` | SQLite gerado pelo Agente de Insights a partir dos dados anomalizados, contendo tabela de origem, achados, métricas, resposta, escopo, data e versão do agente. |
 
 Cada registro deve possuir `batch_id` e `record_id`. Isso permite responder de onde o dado veio, qual regra falhou, quem analisou o problema, se ele foi corrigido e se foi reprocessado.
 
 ## Agente de Análise e Insights
 
-O Agente de Análise e Insights consulta somente o schema `gold` do banco principal por padrão. Ele pode calcular métricas, comparar períodos, encontrar tendências, destacar mudanças relevantes e sugerir perguntas para investigação. Depois de produzir uma resposta, o agente deve salvar o resultado no banco PostgreSQL chamado `insights`, permitindo consultar o histórico de análises no Streamlit.
+O Agente de Análise e Insights recebe como entrada principal os **dados anomalizados** produzidos pelo Agente de Anomalias. Esses dados devem conter os registros suspeitos, a tabela de origem, regras violadas, severidade e demais metadados necessários para análise. O agente pode calcular métricas, comparar padrões, identificar recorrências e gerar explicações. Depois de produzir a análise, ele cria o banco SQLite `medallion/gold/database/insights.db`. O PostgreSQL não é escrito diretamente pelo agente; ele recebe esse SQLite em uma etapa posterior e armazena seus registros.
 
-A interface Streamlit deve apresentar os insights com transparência. Cada resposta precisa informar a tabela consultada no PostgreSQL, as colunas utilizadas, o período analisado, as métricas calculadas e, quando possível, uma visualização ou tabela de apoio. O texto, a consulta executada, os filtros e os resultados resumidos devem ser persistidos na tabela `insight_reports` do banco `insights`.
+A interface Streamlit deve apresentar os insights com transparência. Cada resposta precisa informar a tabela de origem dos dados anomalizados, as colunas utilizadas, o período analisado, as métricas calculadas e, quando possível, uma visualização ou tabela de apoio. O texto, a tabela analisada, os filtros e os resultados resumidos são persistidos primeiro no SQLite `insights.db`; depois, o PostgreSQL recebe e armazena essa estrutura para consulta centralizada.
 
 O agente não deve inventar métricas nem consultar tabelas de quarentena silenciosamente. Caso o usuário queira analisar anomalias, isso deve ocorrer em uma seção explícita de **Qualidade e Anomalias**, separada da seção de **Insights do negócio**.
 
@@ -172,7 +173,7 @@ sequenceDiagram
 
 O nome e a descrição do projeto devem deixar de enfatizar apenas “CSV para DB”. A nova descrição recomendada é:
 
-> **Plataforma local de qualidade e análise inteligente de dados que ingere arquivos tabulares, preserva a origem, normaliza registros, identifica anomalias, publica dados aprovados em PostgreSQL executado via Docker e entrega insights analíticos persistidos e visualizados pelo Streamlit.**
+> **Plataforma local de qualidade e análise inteligente de dados que ingere arquivos tabulares, preserva a origem, normaliza registros, identifica anomalias, publica dados aprovados em PostgreSQL executado via Docker e gera um SQLite de insights que pode ser consumido pelo PostgreSQL e visualizado no Streamlit.**
 
 O projeto ainda é um pipeline de dados, mas agora possui valor de portfólio em três áreas: engenharia de dados, qualidade de dados e análise assistida por agente.
 
@@ -184,7 +185,7 @@ Não é recomendável começar com três agentes autônomos conversando livremen
 
 ## Estrutura proposta do projeto
 
-```text
+```
 ETL_PIPELINE/
 ├── agents/
 │   ├── cleaning_agent.py
@@ -223,20 +224,20 @@ A estrutura acima é uma direção arquitetural. A implementação pode ser incr
 
 ## Persistência PostgreSQL via Docker
 
-A camada Gold possui dois destinos lógicos: o banco principal, que guarda as tabelas Gold aprovadas, e o banco PostgreSQL `insights`, que guarda o nome da tabela analisada e os resultados produzidos pelo agente de análise.
+A camada Gold possui dois destinos lógicos: as tabelas Gold aprovadas e o arquivo SQLite `insights.db`, gerado pelo Agente de Insights a partir dos dados anomalizados. O PostgreSQL é executado via Docker e recebe o `insights.db` por uma rotina posterior de ingestão. O SQLAlchemy ou outro adaptador de carga realiza essa importação; o agente continua desacoplado do PostgreSQL.
 
-O PostgreSQL é o servidor persistente principal da plataforma e é executado via Docker. Dentro desse servidor, a plataforma utiliza um banco principal para os dados Gold, qualidade e metadados, além de um banco separado chamado `insights`. O banco `insights` armazena os resultados das análises, incluindo obrigatoriamente o nome da tabela Gold analisada e os insights coletados. O SQLAlchemy realiza as conexões entre o pipeline, o banco Gold e o banco `insights`. A configuração Docker já está documentada e disponível em `docker-compose.yml`; a migração completa das funções atuais de SQLite para PostgreSQL é uma etapa de implementação do roadmap.
+O PostgreSQL é executado via Docker e funciona como consumidor dos dados Gold e, principalmente, do banco SQLite `insights.db` gerado pelo Agente de Insights. Esse SQLite contém obrigatoriamente o nome da tabela de origem dos dados anomalizados, os achados, métricas e insights coletados. Uma rotina separada recebe o arquivo e armazena seus registros no PostgreSQL. A configuração Docker está disponível em `docker-compose.yml`; a integração completa de importação é uma etapa de implementação do roadmap.
 
-A separação lógica recomendada combina schemas no banco principal com um banco separado chamado `insights`:
+A separação lógica recomendada é:
 
 | Estrutura | Responsabilidade |
 | --- | --- |
-| `gold` | Tabelas aprovadas para consumo analítico. |
-| `quality` | Execuções, regras, findings, quarentena e decisões dos agentes. |
-| banco `insights` | Perguntas, nome da tabela analisada, consultas, métricas, respostas e histórico de insights. |
-| `metadata` | Lotes, arquivos, hashes, versões de schema e auditoria. |
+| PostgreSQL `gold` | Tabelas aprovadas para consumo analítico. |
+| SQLite `insights.db` | Artefato intermediário gerado pelo Agente de Insights. |
+| PostgreSQL `quality` | Execuções, regras, findings, quarentena e decisões dos agentes, quando essa importação for implementada. |
+| PostgreSQL `metadata` | Lotes, arquivos, hashes, versões de schema e auditoria. |
 
-A tabela principal do banco `insights` deve possuir, no mínimo, a seguinte estrutura conceitual:
+A tabela `insight_reports` do SQLite `insights.db` deve possuir, no mínimo, a seguinte estrutura conceitual:
 
 | Campo | Conteúdo |
 | --- | --- |
@@ -253,7 +254,7 @@ A tabela principal do banco `insights` deve possuir, no mínimo, a seguinte estr
 
 Assim, para cada análise, o Streamlit consegue exibir **qual tabela foi analisada, quais filtros foram usados, quais métricas foram encontradas e qual insight foi produzido**.
 
-O fluxo de persistência é: **arquivo Bronze → transformação e validação → banco principal com Gold e Quality → Agente de Insights → banco PostgreSQL `insights` → Streamlit**. O Streamlit lê os relatórios persistidos; ele não deve ser o local definitivo de armazenamento das respostas.
+O fluxo de persistência é: **arquivo Bronze → limpeza → quarentena → Agente de Anomalias → dados anomalizados → Agente de Insights → SQLite ****`insights.db`**** → PostgreSQL → Streamlit**. O Streamlit pode apresentar o SQLite durante o desenvolvimento ou consultar o PostgreSQL depois que o banco for recebido e armazenado.
 
 ## Como executar
 
@@ -292,7 +293,6 @@ python ETL_PIPELINE/eda/.eda_ETl.py
 
 ## Estado atual e próximos passos
 
-A implementação atual realiza ingestão, transformação Silver, tipagem Gold, carga local e armazenamento básico de anomalias. A evolução arquitetural proposta substitui o SQLite como persistência principal por PostgreSQL via Docker e acrescenta a persistência dos relatórios de qualidade e insights. A interface Streamlit ainda está centrada no upload e na confirmação do nome da tabela. O próximo passo prioritário é transformar o retorno do pipeline em um relatório estruturado de qualidade e disponibilizá-lo na interface.
+A implementação atual realiza ingestão, transformação Silver, tipagem Gold, carga local e armazenamento básico de anomalias. A evolução arquitetural proposta adiciona o Agente de Anomalias, que produz os dados anomalizados, e o Agente de Insights, que recebe esses dados e gera o SQLite `insights.db`. O PostgreSQL via Docker recebe e armazena esse SQLite. A interface Streamlit ainda está centrada no upload e na confirmação do nome da tabela. O próximo passo prioritário é gerar o `insights.db` a partir dos dados anomalizados e criar o consumidor PostgreSQL.
 
 Depois disso, o Agente de Anomalias pode explicar os achados e indicar a tabela de quarentena. Somente após o banco Gold estar estável e consultável deve ser implementado o Agente de Insights.
-
