@@ -23,8 +23,10 @@ O objetivo não é apenas converter arquivos em tabelas. O objetivo é persistir
 A plataforma deve responder a três perguntas fundamentais:
 
 1. **O dado recebido pode ser utilizado?**
-2. **Quais registros apresentam problemas e em qual tabela deveriam estar?**
-3. **O que os dados aprovados indicam sobre o negócio?**
+
+1. **Quais registros apresentam problemas e em qual tabela deveriam estar?**
+
+1. **O que os dados aprovados indicam sobre o negócio?**
 
 ## Arquitetura geral
 
@@ -183,7 +185,7 @@ Não é recomendável começar com três agentes autônomos conversando livremen
 
 ## Estrutura proposta do projeto
 
-```text
+```
 ETL_PIPELINE/
 ├── agents/
 │   ├── cleaning_agent.py
@@ -252,7 +254,7 @@ A tabela `insight_reports` do SQLite `insights.db` deve possuir, no mínimo, a s
 
 Assim, para cada análise, o Streamlit consegue exibir **qual tabela foi analisada, quais filtros foram usados, quais métricas foram encontradas e qual insight foi produzido**.
 
-O fluxo de persistência é: **arquivo Bronze → limpeza → quarentena → Agente de Anomalias → dados anomalizados → Agente de Insights → SQLite `insights.db` → PostgreSQL → Streamlit**. O Streamlit pode apresentar o SQLite durante o desenvolvimento ou consultar o PostgreSQL depois que o banco for recebido e armazenado.
+O fluxo de persistência é: **arquivo Bronze → limpeza → quarentena → Agente de Anomalias → dados anomalizados → Agente de Insights → SQLite ****`insights.db`**** → PostgreSQL → Streamlit**. O Streamlit pode apresentar o SQLite durante o desenvolvimento ou consultar o PostgreSQL depois que o banco for recebido e armazenado.
 
 ## Como executar
 
@@ -294,4 +296,3 @@ python ETL_PIPELINE/eda/.eda_ETl.py
 A implementação atual realiza ingestão, transformação Silver, tipagem Gold, carga local e armazenamento básico de anomalias. A evolução arquitetural proposta adiciona o Agente de Anomalias, que produz os dados anomalizados, e o Agente de Insights, que recebe esses dados e gera o SQLite `insights.db`. O PostgreSQL via Docker recebe e armazena esse SQLite. A interface Streamlit ainda está centrada no upload e na confirmação do nome da tabela. O próximo passo prioritário é gerar o `insights.db` a partir dos dados anomalizados e criar o consumidor PostgreSQL.
 
 Depois disso, o Agente de Anomalias pode explicar os achados e indicar a tabela de quarentena. Somente após o banco Gold estar estável e consultável deve ser implementado o Agente de Insights.
-
