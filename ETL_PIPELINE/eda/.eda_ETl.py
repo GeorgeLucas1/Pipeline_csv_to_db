@@ -1,7 +1,9 @@
+import glob
+import itertools
 import os
 import re
-import glob
 import shutil
+
 import pandas as pd
 from sqlalchemy import create_engine
 
@@ -155,7 +157,7 @@ def validar_dados_silver(df: pd.DataFrame) -> tuple:
         mascara_anomalia |= ~df[f"{col}_valido"]
 
     colunas_auxiliares = [
-        c for c in df.columns if c.endswith("_status") or c.endswith("_valido")
+        c for c in df.columns if c.endswith(("_status", "_valido"))
     ]
     dados_validos = df[~mascara_anomalia].drop(columns=colunas_auxiliares)
 
@@ -355,7 +357,9 @@ def processar_arquivo(caminho_arquivo: str, table_name: str | None = None) -> No
 
 def processar_pendentes() -> None:
     padroes = [os.path.join(DATA_RAW_DIR, f"*{ext}") for ext in EXTENSOES_SUPORTADAS]
-    arquivos_pendentes = sorted(set(sum((glob.glob(p) for p in padroes), [])))
+    arquivos_pendentes = sorted(
+        set(itertools.chain.from_iterable(glob.glob(p) for p in padroes))
+    )
 
     if not arquivos_pendentes:
         print("Nenhum arquivo novo encontrado em data_raw/.")

@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o codigo
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependencias
+        run: |
+          pip install --upgrade pip
+          pip install -r ETL_PIPELINE/requirements.txt
+          pip install pytest ruff
+
+      - name: Lint (ruff)
+        run: ruff check ETL_PIPELINE
+
+      - name: Testes unitarios (pytest)
+        run: pytest ETL_PIPELINE/tests -v
+
+      - name: Smoke test do pipeline ETL
+        run: python ETL_PIPELINE/eda/.eda_ETl.py

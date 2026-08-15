@@ -1,7 +1,6 @@
 import importlib.util
 import os
 
-import pandas as pd
 import streamlit as st
 
 _ETL_CAMINHO = os.path.join(
@@ -71,13 +70,15 @@ if arquivo_enviado is not None:
             st.session_state["tabela_confirmada"] = ""
             st.rerun()
 
-    if arquivo_enviado.name != st.session_state.get("arquivo_processado"):
-        if "tabela_confirmada" not in st.session_state:
-            if "nome_tabela_input" not in st.session_state:
-                st.session_state["nome_tabela_input"] = (
-                    nome_tabela_a_partir_do_arquivo(caminho_destino)
-                )
-            confirmar_tabela()
+    if (
+        arquivo_enviado.name != st.session_state.get("arquivo_processado")
+        and "tabela_confirmada" not in st.session_state
+        and "nome_tabela_input" not in st.session_state
+    ):
+        st.session_state["nome_tabela_input"] = (
+            nome_tabela_a_partir_do_arquivo(caminho_destino)
+        )
+        confirmar_tabela()
 
     nome_confirmado = st.session_state.get("tabela_confirmada", "")
 
@@ -90,5 +91,5 @@ if arquivo_enviado is not None:
                 f"Arquivo processado e carregado na tabela `{nome_confirmado}` com sucesso!"
             )
             st.session_state.pop("tabela_confirmada", None)
-        except Exception as erro:
+        except Exception as erro:  # noqa: BLE001 - UI deve exibir qualquer erro ao usuario
             st.error(f"{erro}")

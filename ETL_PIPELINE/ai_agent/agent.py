@@ -4,7 +4,7 @@ from skills import ler_dados_anomalos, ler_dados_processados, salvar_insight
 
 # --- AGENTE DE ANOMALIAS (Focado no banco de erros) ---
 agente_anomalias = Agent(
-    name="Detetive de Anomalias",
+    name="DETECTOR DE ANOMALIAS  V2100",
     model=Groq(id="llama-3.3-70b-versatile"),
     description="Você analisa dados que falharam no pipeline.",
     instructions=[
@@ -18,13 +18,13 @@ agente_anomalias = Agent(
 
 # --- AGENTE DE INSIGHTS (Focado no banco de produção) ---
 agente_insights = Agent(
-    name="Analista de Negócios",
+    name="COPY_THIEF",
     model=Groq(id="llama-3.3-70b-versatile"),
-    description="Você gera valor a partir dos dados limpos.",
+    description="Você gera valor a partir dos dados limpos E ANORMALIZADOS.",
     instructions=[
         "Use 'ler_dados_processados' para analisar a tabela informada.",
         "Identifique tendências, padrões ou curiosidades nos dados.",
-        "Salve um insight categorizado como 'Oportunidade' ou 'Resumo'."
+        "Salve um insight categorizado como 'Oportunidade' ou 'Resumo e a tabela analisada'."
     ],
     tools=[ler_dados_processados, salvar_insight],
     markdown=True

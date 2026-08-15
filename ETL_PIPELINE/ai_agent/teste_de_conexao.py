@@ -1,10 +1,9 @@
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
-
 from agno.agent import Agent
 from agno.models.groq import Groq
+from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -21,10 +20,10 @@ def testar_conexao():
     )
 
     try:
-        resposta = agente.print_response("Responda apenas: conexao ok", markdown=False)
+        agente.print_response("Responda apenas: conexao ok", markdown=False)
         print("CONEXAO FUNCIONANDO")
         return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - teste de conexao deve capturar qualquer erro
         print(f"ERRO NA CONEXAO: {type(e).__name__}: {e}")
         return False
 
