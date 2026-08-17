@@ -1,6 +1,9 @@
 import importlib.util
 import os
+import sqlite3
+from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 _ETL_CAMINHO = os.path.join(
@@ -93,3 +96,88 @@ if arquivo_enviado is not None:
             st.session_state.pop("tabela_confirmada", None)
         except Exception as erro:  # noqa: BLE001 - UI deve exibir qualquer erro ao usuario
             st.error(f"{erro}")
+
+
+# ── INSIGHTS CAPTADOS ────────────────────────────────────────────────────────
+
+INSIGHTS_DB = Path(__file__).resolve().parent.parent / "medallion" / "gold" / "database" / "insights.db"
+
+COR_CATEGORIA = {
+    "Oportunidade": "green",
+    "Risco Identificado": "orange",
+    "Resumo Executivo": "blue",
+    "Erro de Origem": "red",
+    "Inconsistencia de Dados": "violet",
+    "Regra de Negocio Violada": "red",
+}
+
+
+def _carregar_insights() -> pd.DataFrame:
+    if not INSIGHTS_DB.exists():
+        return pd.DataFrame()
+    conn = sqlite3.connect(INSIGHTS_DB)
+    df = pd.read_sql_query(
+        "SELECT rowid AS id, categoria, observacao, data FROM insights ORDER BY data DESC",
+        conn,
+    )
+    conn.close()
+    return df
+
+
+def _badge(categoria: str) -> str:
+    cor = COR_CATEGORIA.get(categoria, "gray")
+    return f":{cor}-badge[{categoria}]"
+
+
+st.divider()
+st.subheader("Insights Captados")
+
+df_insights = _carregar_insights()
+
+if df_insights.empty:
+    st.info("Nenhum insight registrado ainda. Execute o Agente de Insights primeiro.")
+else:
+    total = len(df_insights)
+    categorias = df_insights["categoria"].value_counts()
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total de Insights", total)
+    col2.metric("Categorias", len(categorias))
+    col3.metric(
+        "Ultimo registro",
+        pd.to_datetime(df_insights["data"]).max().strftime("%d/%m/%H:%M")
+        if total > 0
+        else "-",
+    )
+
+    st.markdown("### Por categoria")
+    cat_cols = st.columns(min(len(categorias), 4))
+    for i, (cat, qtd) in enumerate(categorias.items()):
+        with cat_cols[i % len(cat_cols)]:
+            cor = COR_CATEGORIA.get(cat, "gray")
+            st.metric(label=cat, value=qtd)
+
+    st.markdown("---")
+    opcoes_cat = ["Todas"] + list(categorias.index)
+    filtro = st.selectbox("Filtrar por categoria", opcoes_cat)
+
+    df_filtrado = df_insights if filtro == "Todas" else df_insights[df_insights["categoria"] == filtro]
+
+    st.markdown("### Detalhes")
+
+    for _, row in df_filtrado.iterrows():
+        data_fmt = pd.to_datetime(row["data"]).strftime("%d/%m/%Y %H:%M")
+        with st.container(border=True):
+            col_a, col_b = st.columns([1, 3])
+            with col_a:
+                st.markdown(f"**{row['categoria']}**")
+                st.caption(data_fmt)
+            with col_b:
+                st.markdown(row["observacao"])
+
+    st.markdown("---")
+    with st.expander("Tabela completa"):
+        st.dataframe(
+            df_filtrado[["categoria", "observacao", "data"]].reset_index(drop=True),
+            use_container_width=True,
+        )
