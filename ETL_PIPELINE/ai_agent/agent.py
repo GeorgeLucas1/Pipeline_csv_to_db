@@ -30,7 +30,7 @@ agente_anomalias = Agent(
         "  - acao_recomendada: Corrigir, Revisar, Aceitar com alerta ou Rejeitar",
         "Agrupe os registros por rule_code e indique quais regras apresentam mais falhas.",
         "Classifique o problema como 'Erro de Origem', 'Inconsistencia de Dados' ou 'Regra de Negocio Violada'.",
-        "Depois da analise, salve um insight consolidado com 'salvar_insight'.",
+        "Depois da analise, salve um insight consolidado com 'salvar_insight' passando a categoria, a observacao e o nome da tabela de origem (tabela_origem).",
         "Nao invente dados. Trabalhe exclusivamente com os dados retornados pela tool.",
         "Se o banco de anomalias nao existir, informe que nao ha dados para analisar."
     ],
@@ -56,7 +56,7 @@ agente_insights = Agent(
         "  - Metricas resumidas: contagem total, valores unicos, nulos",
         "Gere um insight em linguagem natural com titulo, descricao e dados de suporte.",
         "Classifique o insight como 'Oportunidade', 'Risco Identificado' ou 'Resumo Executivo'.",
-        "Salve o resultado com 'salvar_insight' passando a categoria e a observacao.",
+        "Salve o resultado com 'salvar_insight' passando a categoria, a observacao e o nome da tabela de origem (tabela_origem).",
         "Nao faca suposicoes. Trabalhe apenas com os dados retornados.",
         "Se a tabela nao existir, informe o nome das tabelas disponiveis."
     ],

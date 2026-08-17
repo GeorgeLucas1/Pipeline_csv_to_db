@@ -116,10 +116,17 @@ def _carregar_insights() -> pd.DataFrame:
     if not INSIGHTS_DB.exists():
         return pd.DataFrame()
     conn = sqlite3.connect(INSIGHTS_DB)
-    df = pd.read_sql_query(
-        "SELECT rowid AS id, categoria, observacao, data FROM insights ORDER BY data DESC",
-        conn,
-    )
+    colunas = [r[1] for r in conn.execute("PRAGMA table_info(insights)").fetchall()]
+    if "tabela_origem" not in colunas:
+        df = pd.read_sql_query(
+            "SELECT rowid AS id, categoria, observacao, 'N/A' AS tabela_origem, data FROM insights ORDER BY data DESC",
+            conn,
+        )
+    else:
+        df = pd.read_sql_query(
+            "SELECT rowid AS id, categoria, observacao, tabela_origem, data FROM insights ORDER BY data DESC",
+            conn,
+        )
     conn.close()
     return df
 
@@ -171,6 +178,7 @@ else:
             col_a, col_b = st.columns([1, 3])
             with col_a:
                 st.markdown(f"**{row['categoria']}**")
+                st.caption(f"Tabela: `{row['tabela_origem']}`")
                 st.caption(data_fmt)
             with col_b:
                 st.markdown(row["observacao"])
@@ -178,6 +186,6 @@ else:
     st.markdown("---")
     with st.expander("Tabela completa"):
         st.dataframe(
-            df_filtrado[["categoria", "observacao", "data"]].reset_index(drop=True),
+            df_filtrado[["categoria", "tabela_origem", "observacao", "data"]].reset_index(drop=True),
             use_container_width=True,
         )
