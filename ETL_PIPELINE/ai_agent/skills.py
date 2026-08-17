@@ -29,12 +29,22 @@ def ler_dados_processados(tabela: str):
     conn.close()
     return df.to_json(orient="records")
 
-def salvar_insight(categoria: str, observacao: str):
+def salvar_insight(categoria: str, observacao: str, tabela_origem: str = "N/A"):
     """Grava um novo insight no banco insights.db"""
     conn = sqlite3.connect(DB_INSIGHTS)
     cursor = conn.cursor()
-    cursor.execute("CREATE TABLE IF NOT EXISTS insights (categoria TEXT, observacao TEXT, data TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
-    cursor.execute("INSERT INTO insights (categoria, observacao) VALUES (?, ?)", (categoria, observacao))
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS insights (
+            categoria TEXT,
+            observacao TEXT,
+            tabela_origem TEXT DEFAULT 'N/A',
+            data TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute(
+        "INSERT INTO insights (categoria, observacao, tabela_origem) VALUES (?, ?, ?)",
+        (categoria, observacao, tabela_origem),
+    )
     conn.commit()
     conn.close()
     return f"Sucesso: Insight de {categoria} registrado."
