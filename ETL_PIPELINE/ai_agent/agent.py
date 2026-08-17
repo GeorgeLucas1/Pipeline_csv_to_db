@@ -1,8 +1,13 @@
+from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 from agno.agent import Agent
 from agno.models.groq import Groq
 from agno.team import Team
 from skills import ler_dados_anomalos, ler_dados_processados, salvar_insight
-
+#é necessario falar  modelo caso nao tenha ele buscara pela openai
 # --- AGENTE DE ANOMALIAS ---
 agente_anomalias = Agent(
     name="DOUTOR ANOMALIAS",
@@ -60,7 +65,8 @@ agente_insights = Agent(
 )
 #MEMBERS ÉÉ A FORMA DE DEFINIR OS AGENTES QUE FAZEM PARTE DO TIME. CADA AGENTE TEM SUAS INSTRUCOES E TOOLS ESPECIFICAS, MAS O TIME COORDENA A ANALISE GERAL.
 time_analise = Team(
-    name=" ANALISADOR DE ANOMALIAS E INSIGHTS",
+    name=" ANISADOR DE ANOMALIAS E INSIGHTS",
+    model=Groq(id="llama-3.3-70b-versatile"),
     members=[agente_anomalias, agente_insights],
     description="Time que analisa anomalias e gera insights de negocio a partir dos dados do pipeline.",
     instructions=[
